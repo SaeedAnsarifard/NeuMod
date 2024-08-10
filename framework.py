@@ -17,61 +17,59 @@ g      = hbarc * f_c
     
 class FrameWork(object):
     """Computing B8 total event rate at each day from day initial to day final in counts per day per kilo ton, according to the Super-Kamiokande experiment response function.
-    inputs are date for initial and final days, and an array of survival probability with shape (d,e). d is the number of days from the initial day to the final day and e = 155 which is derived by assuming the first bin is 0.1 MeV, the last bin is 15.5 MeV  and bin width is 0.1 MeV
+    inputs are date for initial and final days, and an array of survival probability. Its shape is (d,e) If survival probability is a function of distance.  d is the number of days from initial day to the final day and e = 155 which is derived by assuming the first bin is 0.1 MeV, the last bin is 15.5 MeV  and bin width is 0.1 MeV. In case of no distance dependency, shape is (e)
     date format is 'year,month,day' """
     
-    def __init__(self, first_day='2008,9,15', last_day= '2018,5,30', survival_probablity):
+    def __init__(self,survival_probablity, first_day='2008,9,15', last_day= '2018,5,30'):
         firstdate = first_day.split(',')
         lastdate  = last_day.split(',')
         
-        firstdate = datetime(firstdate[0],firstdate[1],firstdate[2],0,0,0,tzinfo=utc)
-        lastdate  = datetime(lastdate[0],lastdate[1],lastdate[2],0,0,0,tzinfo=utc)
+        firstdate = datetime(int(firstdate[0]),int(firstdate[1]),int(firstdate[2]),0,0,0,tzinfo=utc)
+        lastdate  = datetime(int(lastdate[0]),int(lastdate[1]),int(lastdate[2]),0,0,0,tzinfo=utc)
         
         self.firstday= ts.utc(firstdate)
         self.lastday = ts.utc(lastdate)
+        self.total_days = int(self.lastday-self.firstday)
         
-        #Nutrino Flux normalization :    from SNO
+        if survival_probablity.shape[0] == self.total_days :
+            self.survival_probablity = survival_probablity
+        else:
+            self.survival_probablity = np.ones((self.total_days,1))*survival_probablity[np.newaxis,:]
+            
+        print(self.survival_probablity.shape)
+        
+        """ Nutrino Flux normalization :    from SNO"""
         self.norm  = {'B8' : 5.25e-4}   #\times 10^{10}
         
-        #Neutrino production point weight function : http://www.sns.ias.edu/~jnb/
+        """ Neutrino production point weight function : http://www.sns.ias.edu/~jnb/"""
         load_phi   = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack = True)
         self.phi   = {'B8' : load_phi[6,:]}
         
-        #Electron density inside sun 10^{23}/cm^{3}
+        """ Electron density inside sun 10^{23}/cm^{3}"""
         self.n_e  = 6*10**load_phi[2,:]
         
-        #Neutrino energy spectrum : http://www.sns.ias.edu/~jnb/
+        """ Neutrino energy spectrum : http://www.sns.ias.edu/~jnb/"""
         spectrumB8      = np.loadtxt('./Spectrum/B8_spectrum.txt')
         self.spec       = {'B8' : spectrumB8[:,1]}
         
-        #Neutrino energy in Mev
+        """ Neutrino energy in Mev"""
         self.e_nu       = {'B8' : spectrumB8[:,0]}
         
-        #electron recoil energy in Mev
+        """ Electron recoil energy in Mev"""
         self.uppt       = 100
-        self.t_e        = {'B8'  : [IntegralLimit(spectrumB8[:,0],m_e,uppt=self.uppt)]}
+        self.t_e        = {'B8'  : IntegralLimit(spectrumB8[:,0],m_e,uppt=self.uppt)}
         
-        #Super-K Data event (count per year per  kilo ton) :
-        self.su_nbin  = su_nbin
-        self.data_su  = np.loadtxt('./Data/B8_Data_2020.txt')[:self.su_nbin,:]
+#        """ Super-Kamiokande Data event (count per year per  kilo ton) :"""
+#        self.su_nbin  = su_nbin
+#        self.data_su  = np.loadtxt('./Data/B8_Data_2020.txt')[:self.su_nbin,:]
         
-        #geometric charactrestic : resolution of delta theta, theta is the angle between earth and sun
-        self.resolution                 = 0.08
-        self.l,self.a,self.theta,self.h = SunEarthDistance(self.resolution)
-        self.year                       = 60*60*24*365.25
+        """ geometric characteristic: resolution of d, the distance between sun and earth is considered to be one day """
+        self.resolution = 1
+        self.d          = SunEarthDistance(self.firstday,self.total_days,self.resolution)
+        
     
-        #Super-k detector response function   
-        self.res  = ResSu(self.data_su,self.t_e['B8'][0])
-                
-        shape = np.loadtxt('./Correlated_Errors/Nutrino_shape_Systematic_Uncertainties.txt')[:self.su_nbin,:]
-        scale = np.loadtxt('./Correlated_Errors/Energy_Scale_Systematic_Uncertainties.txt')[:self.su_nbin,:]
-        resol = np.loadtxt('./Correlated_Errors/Energy_Resolution_Systematic_Uncertainties.txt')[:self.su_nbin,:]
-
-        self.delta = np.random.normal(0,1,(500,3))
-
-        self.f     = ((1/(1+self.delta[:,0,np.newaxis]*shape[:,1]/100))*
-                      (1/(1+self.delta[:,1,np.newaxis]*scale[:,1]/100))*
-                      (1/(1+self.delta[:,2,np.newaxis]*resol[:,1]/100)))
+        """ Super-Kamiokande detector response function: PhysRevD.109.092001 """
+        self.resp_func  = ResSu(self.data_su,self.t_e['B8'])
         
         #Based on KamLAND
         self.m12_bar  = 7.54e-5
@@ -88,17 +86,16 @@ class FrameWork(object):
                         'mum3': 0. ,
                         'M12' : m12 }
         
-        #Unoscilated signal is produced to compare with the SuperKamiokande results. For more info see their papers!
-        #Super-K  : number of target per kilo ton    :  (10/18) \times 10^{6}/m_p -> 3.3 \times 10^{32} 
-        self.det_su = 365.25 * 24. * 6. * 6. * (10/18) * 1/m_p #number of target in kilo ton in a year times 10^{35}
-        #B8 phi SNO : 5.25e \times 10^6 cm^2 s^-1
-        borom_spec,borom_total = BoromUnoscilated(self.t_e['B8'][0],self.e_nu['B8'][0],self.spec['B8'][0],g,m_e,self.uppt,self.data_su,self.res)
-        self.borom_unoscilated_spectrum = self.det_su * (2 * np.pi/self.year) * 5.25e-4 * (self.a**2/self.h) * borom_spec
-        self.borom_unoscilated_total    = self.det_su * (2 * np.pi/self.year) * 5.25e-4 * (self.a**2/self.h) * borom_total
-        
-        self.dr_dldt    = [{'pp' :[[]] , 'Be7' :[[],[]] , 'pep' :[[]] , 'B8' :[[]] } for i in range(self.m12.shape[0])]
-        self.components = ['pp','Be7','pep','B8']
-        
+#        """ Unoscilated signal is produced to compare with the Super-Kamiokande results. For more info see their papers!
+#        number of target per kilo ton per year   :  365.25 * 24. * 6.0 * 6.0 * (10/18) \times 10^{6}/m_p -> 0.33 \times 10^{27} """
+#        self.detector = 365.25 * 24. * 6. * 6. * (10/18) * 1/m_p
+#        borom_spec,borom_total = BoromUnoscilated(self.t_e['B8'][0],self.e_nu['B8'][0],self.spec['B8'][0],g,m_e,self.uppt,self.data_su,self.res)
+#        self.borom_unoscilated_spectrum = self.det_su * (2 * np.pi/self.year) * 5.25e-4 * (self.a**2/self.h) * borom_spec
+#        self.borom_unoscilated_total    = self.det_su * (2 * np.pi/self.year) * 5.25e-4 * (self.a**2/self.h) * borom_total
+#        
+#        self.dr_dldt    = [{'pp' :[[]] , 'Be7' :[[],[]] , 'pep' :[[]] , 'B8' :[[]] } for i in range(self.m12.shape[0])]
+#        self.components = ['pp','Be7','pep','B8']
+#        
     def __getitem__(self,param_ubdate):
         self.param['T12']     = param_ubdate[0]
         self.param[self.mumi] = param_ubdate[1]
@@ -127,15 +124,27 @@ class FrameWork(object):
                     self.dr_dldt[i][c][j] = (self.a**2/self.h) * self.norm[c][j] * r #number of event per each delta theta per electron recoil times 10^{-35}
         return self.dr_dldt
 
-def SunEarthDistance(resolution=0.08):
-    a     = (1.521e11 + 1.471e11)/2  #L = 1.5e11 meter 
+def SunEarthDistance(t_initial,t_total,resolution):
+    """Load the JPL ephemeris DE421 (covers 1900-2050).
+    https://ui.adsabs.harvard.edu/abs/2019ascl.soft07024R """
+    
+    planets     = load('de421.bsp')
+    sun,earth         = planets['sun'],planets['earth']
+    t_array     = np.arange(0,t_total,resolution)
+    dtheory_sun = np.zeros(t_array.shape[0])
+    
+    for i,dt in enumerate(t_array):
+        tstep = t_initial + dt
+        
+        astrometric_sun    = earth.at(tstep).observe(sun)
+        lat, lon, distance = astrometric_sun.radec()
+        dtheory_sun[i]     = distance.m
+    
+
+    a     = (1.521e11 + 1.471e11)/2  #L = 1.5e11 meter
     e     = (1.521e11 - 1.471e11)/(1.521e11 + 1.471e11)
 
-    theta = np.arange(0,2*np.pi,resolution)
-    cos   = np.cos(theta)
-    l     = a*(1-e**2)/(1+e*cos)    
-    h     = np.trapz(l**2,theta)/(60*60*24*365.25)
-    return l,a,theta,h
+    return dtheory_sun
 
 def IntegralLimit(e,m_e,lowt=-4,uppt=100):
     mint = np.min(e)
@@ -177,7 +186,7 @@ def DCS(g, m_e, e_nu, t_e, i=1):
     return  2 * g**2 * (m_e/np.pi) * (a1 + a2 - a3) * 10 #\times 10^{-45} in cm^2
 
 def ResSu(data, t_e):
-    #PhysRevD.109.092001
+    
     r   = np.zeros((data.shape[0],t_e.shape[0]))
     for j in range (data.shape[0]):
         e_nu = np.linspace(data[j,0],data[j,1])

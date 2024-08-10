@@ -1,69 +1,56 @@
 import numpy as np
 
-f_c    = 1.166 #Fermi constant :  1.166 \times 10^{-11}/Mev^2
-m_e    = 0.511 #Electron mass : 0.511 Mev
-hbarc  = 1.97 #h_{bar}c : 1.97 10^{-11} Mev.cm
-m_p    = 1.67 #proton mass :  1.67 \times 10^{-27} kg
+from datetime import datetime
+from skyfield.api import load, utc
+
+"""Create a timescale."""
+ts     = load.timescale()
+"""Fermi constant :  1.166 \times 10^{-11}/Mev^2"""
+f_c    = 1.166
+"""Electron mass : 0.511 Mev"""
+m_e    = 0.511
+"""h_{bar}c : 1.97 10^{-11} Mev.cm"""
+hbarc  = 1.97
+"""proton mass :  1.67 \times 10^{-27} kg"""
+m_p    = 1.67
 g      = hbarc * f_c
     
 class FrameWork(object):
     """Computing B8 total event rate at each day from day initial to day final in counts per day per kilo ton, according to the Super-Kamiokande experiment response function.
-    inputs are date for initial and final days, and an array of survival probability with shape (d,e). d is the number of days from the initial day to the final day and e = 155 which is derived by assuming the first bin is 0.1 MeV, the last bin is 15.5 MeV  and bin width is 0.1 MeV """
+    inputs are date for initial and final days, and an array of survival probability with shape (d,e). d is the number of days from the initial day to the final day and e = 155 which is derived by assuming the first bin is 0.1 MeV, the last bin is 15.5 MeV  and bin width is 0.1 MeV
+    date format is 'year,month,day' """
     
-    #su_nbin is the number of electron recoil spectrum bins in the SuperKamiokande experiment (Max is 23)
-    #mumi stands for \Delta m_i^2 which is a Majorana mass splitting sourced by pseudo-Dirac scenario
-    #t12 stands for \theta_{12}
-    #m12 stands for \Delta m_{12}^2
-    #m12_nuisance whether be considered as a nuisance parameter around or fixed to the value of KamLAND
-    
-    def __init__(self, su_nbin=23, mumi = 'mum2', t12 = 33.4, m12=7.54e-5, m12_nuisance=True):
-        #Nutrino Flux normalization :    Arxiv : 1611.09867 (HZ)
-        self.norm  = {'pp' : [5.98],
-                      'Be7': [0.9*4.93e-1,0.1*4.93e-1],
-                      'pep': [1.44e-2], 
-                      'B8' : [5.46e-4]}   #\times 10^{10}
+    def __init__(self, first_day='2008,9,15', last_day= '2018,5,30', survival_probablity):
+        firstdate = first_day.split(',')
+        lastdate  = last_day.split(',')
+        
+        firstdate = datetime(firstdate[0],firstdate[1],firstdate[2],0,0,0,tzinfo=utc)
+        lastdate  = datetime(lastdate[0],lastdate[1],lastdate[2],0,0,0,tzinfo=utc)
+        
+        self.firstday= ts.utc(firstdate)
+        self.lastday = ts.utc(lastdate)
+        
+        #Nutrino Flux normalization :    from SNO
+        self.norm  = {'B8' : 5.25e-4}   #\times 10^{10}
         
         #Neutrino production point weight function : http://www.sns.ias.edu/~jnb/
         load_phi   = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack = True)
-        self.phi   = {'pp' : load_phi[5,:],
-                      'Be7': load_phi[10,:],
-                      'pep': load_phi[11,:],
-                      'B8' : load_phi[6,:]}
+        self.phi   = {'B8' : load_phi[6,:]}
         
         #Electron density inside sun 10^{23}/cm^{3}
         self.n_e  = 6*10**load_phi[2,:]
         
         #Neutrino energy spectrum : http://www.sns.ias.edu/~jnb/
         spectrumB8      = np.loadtxt('./Spectrum/B8_spectrum.txt')
-        spectrumpp      = np.loadtxt('./Spectrum/pp_spectrum.txt')
-        spectrumbe71    = np.loadtxt('./Spectrum/be71_spectrum.txt')
-        spectrumbe72    = np.loadtxt('./Spectrum/be72_spectrum.txt')
-        spectrumpep     = np.loadtxt('./Spectrum/pep_spectrum.txt')
-        self.spec       = {'pp' : [spectrumpp[:,1]],
-                           'Be7': [spectrumbe71[:,1],spectrumbe72[:,1]],
-                           'pep': [spectrumpep[:,1]]  ,
-                           'B8' : [spectrumB8[:,1]]}
+        self.spec       = {'B8' : spectrumB8[:,1]}
         
         #Neutrino energy in Mev
-        self.e_nu       = {'pp' : [spectrumpp[:,0]],
-                           'Be7': [spectrumbe71[:,0],spectrumbe72[:,0]],
-                           'pep': [spectrumpep[:,0]],
-                           'B8' : [spectrumB8[:,0]]}
+        self.e_nu       = {'B8' : spectrumB8[:,0]}
         
         #electron recoil energy in Mev
         self.uppt       = 100
-        self.t_e        = {'pp'  : [IntegralLimit(spectrumpp[:,0],m_e,uppt=self.uppt)],
-                           'Be7' : [IntegralLimit(spectrumbe71[:,0],m_e,uppt=self.uppt),
-                                    IntegralLimit(spectrumbe72[:,0],m_e,uppt=self.uppt)],
-                           'pep' : [IntegralLimit(spectrumpep[:,0],m_e,uppt=self.uppt)],
-                           'B8'  : [IntegralLimit(spectrumB8[:,0],m_e,uppt=self.uppt)]}
+        self.t_e        = {'B8'  : [IntegralLimit(spectrumB8[:,0],m_e,uppt=self.uppt)]}
         
-        #Borexino Data event (count per day per 100 ton) : https://doi.org/10.1038/s41586-018-0624-y 
-        #Eur. Phys. J. C 80, 1091 (2020)
-        self.data_bo    = {'pp' : {'R' : 134.,'e' : 14.},
-                           'Be7': {'R' : 48.3,'e' : 1.3},
-                           'pep': {'R' : 2.43,'e' : 0.42}}
-
         #Super-K Data event (count per year per  kilo ton) :
         self.su_nbin  = su_nbin
         self.data_su  = np.loadtxt('./Data/B8_Data_2020.txt')[:self.su_nbin,:]

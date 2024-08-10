@@ -17,10 +17,9 @@ g      = hbarc * f_c
     
 class FrameWork(object):
     """Computing B8 total event rate at each day from day initial to day final in counts per day per kilo ton, according to the Super-Kamiokande experiment response function.
-    inputs are date for initial and final days, and an array of survival probability. Its shape is (d,e) If survival probability is a function of distance.  d is the number of days from initial day to the final day and e = 155 which is derived by assuming the first bin is 0.1 MeV, the last bin is 15.5 MeV  and bin width is 0.1 MeV. In case of no distance dependency, shape is (e)
-    date format is 'year,month,day' """
+    inputs are date for initial and final days, in the format of 'year,month,day' """
     
-    def __init__(self,survival_probablity, first_day='2008,9,15', last_day= '2018,5,30'):
+    def __init__(self, first_day='2008,9,15', last_day= '2018,5,30'):
         firstdate = first_day.split(',')
         lastdate  = last_day.split(',')
         
@@ -31,12 +30,8 @@ class FrameWork(object):
         self.lastday = ts.utc(lastdate)
         self.total_days = int(self.lastday-self.firstday)
         
-        if survival_probablity.shape[0] == self.total_days :
-            self.survival_probablity = survival_probablity
-        else:
-            self.survival_probablity = np.ones((self.total_days,1))*survival_probablity[np.newaxis,:]
-            
-        print(self.survival_probablity.shape)
+        self.survival_probablity = np.zeros(())
+
         
         """ Nutrino Flux normalization :    from SNO"""
         self.norm  = {'B8' : 5.25e-4}   #\times 10^{10}
@@ -67,24 +62,25 @@ class FrameWork(object):
         self.resolution = 1
         self.d          = SunEarthDistance(self.firstday,self.total_days,self.resolution)
         
-    
-        """ Super-Kamiokande detector response function: PhysRevD.109.092001 """
-        self.resp_func  = ResSu(self.data_su,self.t_e['B8'])
+        self.survival_probablity = np.zeros((self.total_days,len(self.e_nu['B8'])))
+        self.sterile_probablity  = np.zeros((self.total_days,len(self.e_nu['B8'])))
+#        """ Super-Kamiokande detector response function: PhysRevD.109.092001 """
+#        self.resp_func  = ResSu(self.data_su,self.t_e['B8'])
         
-        #Based on KamLAND
-        self.m12_bar  = 7.54e-5
-        self.sig_m12  = 5.0e-6
-        if m12_nuisance:
-            self.m12 = np.linspace(self.m12_bar - (2*self.sig_m12), self.m12_bar + (2*self.sig_m12),7)
-        else:
-            self.m12 = np.array([m12])    
-        self.mumi    = mumi
-        self.param   = {'T12' : t12 ,
-                        'T13' : 8.57, 
-                        'mum1': 0. ,
-                        'mum2': 0. ,
-                        'mum3': 0. ,
-                        'M12' : m12 }
+#        #Based on KamLAND
+#        self.m12_bar  = 7.54e-5
+#        self.sig_m12  = 5.0e-6
+#        if m12_nuisance:
+#            self.m12 = np.linspace(self.m12_bar - (2*self.sig_m12), self.m12_bar + (2*self.sig_m12),7)
+#        else:
+#            self.m12 = np.array([m12])    
+#        self.mumi    = mumi
+#        self.param   = {'T12' : t12 ,
+#                        'T13' : 8.57, 
+#                        'mum1': 0. ,
+#                        'mum2': 0. ,
+#                        'mum3': 0. ,
+#                        'M12' : m12 }
         
 #        """ Unoscilated signal is produced to compare with the Super-Kamiokande results. For more info see their papers!
 #        number of target per kilo ton per year   :  365.25 * 24. * 6.0 * 6.0 * (10/18) \times 10^{6}/m_p -> 0.33 \times 10^{27} """
@@ -96,32 +92,44 @@ class FrameWork(object):
 #        self.dr_dldt    = [{'pp' :[[]] , 'Be7' :[[],[]] , 'pep' :[[]] , 'B8' :[[]] } for i in range(self.m12.shape[0])]
 #        self.components = ['pp','Be7','pep','B8']
 #        
-    def __getitem__(self,param_ubdate):
-        self.param['T12']     = param_ubdate[0]
-        self.param[self.mumi] = param_ubdate[1]
-        for i in range(self.m12.shape[0]):
-            self.param['M12']= self.m12[i]
-            pee        = {'pp' :[[]] , 'Be7' :[[],[]] , 'pep' :[[]] , 'B8' :[[]] }
-            pes        = {'pp' :[[]] , 'Be7' :[[],[]] , 'pep' :[[]] , 'B8' :[[]] }
-            for c in self.components:
-                for j in range(len(self.t_e[c])):
-                    t = self.t_e[c][j]
-                    e = self.e_nu[c][j]
-                    sp= self.spec[c][j]
-                    pee[c][j],pes[c][j] = SurvivalProbablity(self.phi[c], e, self.n_e, f_c, hbarc, self.param, self.l)
-                    r = np.zeros((self.l.shape[0],t.shape[0]))
-                    k = 0
-                    for z,ts in enumerate(t):
-                        if z<=self.uppt:
-                            cse    = DCS(g,m_e,e,ts,1)
-                            csmu   = DCS(g,m_e,e,ts,-1)
-                            r[:,z] = np.trapz(sp*(cse*pee[c][j]+csmu*(1-pee[c][j]-pes[c][j])),e,axis=1)
-                        else:
-                            cse    = DCS(g,m_e,e[k:],ts,1)
-                            csmu   = DCS(g,m_e,e[k:],ts,-1)
-                            r[:,z] = np.trapz(sp[k:]*(cse*pee[c][j][:,k:]+csmu*(1-pee[c][j][:,k:]-pes[c][j][:,k:])),e[k:],axis=1)
-                            k      = k + 1
-                    self.dr_dldt[i][c][j] = (self.a**2/self.h) * self.norm[c][j] * r #number of event per each delta theta per electron recoil times 10^{-35}
+    def __getitem__(self,getitem_pos):
+        """ input is an array of survival probability. Its shape is (d,e) d is the number of days from initial day to the final day and e is the number of neutrino spectrum energy bin """
+        survival_probablity_update,sterile_probablity_update = getitem_pos
+        
+        if (survival_probablity_update.shape != self.survival_probablity.shape):
+            raise Exception("Survival Probablity shape not match")
+        else :
+            self.survival_probablity = survival_probablity_update
+            
+        if sterile_probablity_update == 0:
+            sterile_probablity = 0
+        else :
+            if (sterlie_probablity_update.shape != self.sterile_probablity.shape):
+                raise Exception("Sterile Probablity shape not match")
+            else :
+                self.sterile_probablity = sterile_probablity_update
+        
+      
+        t = self.t_e['B8']
+        e = self.e_nu['B8']
+        sp= self.spec['B8']
+        pee = self.survival_probablity
+        pes = self.sterile_probablity
+        
+        r = np.zeros((self.d.shape[0],t.shape[0]))
+        k = 0
+        for z,ts in enumerate(t):
+            if z<=self.uppt:
+                cse    = DCS(g,m_e,e,ts,1)
+                csmu   = DCS(g,m_e,e,ts,-1)
+                r[:,z] = np.trapz(self.spec['B8'] * (cse*self.survival_probablity + csmu * (1-self.survival_probablity - self.sterile_probablity)),self.e_nu['B8'],axis=1)
+            else:
+                cse    = DCS(g,m_e,e[k:],ts,1)
+                csmu   = DCS(g,m_e,e[k:],ts,-1)
+                r[:,z] = np.trapz(self.spec['B8'][k:] * (cse*self.survival_probablity[:,k:] + csmu * (1 - self.survival_probablity[:,k:] - self.sterile_probablity[:,k:])),self.e_nu['B8'][k:],axis=1)
+                k      = k + 1
+        
+        self.dr_dldt =  (self.norm['B8']/self.d)[:,np.newaxis] * r #number of event per each delta theta per electron recoil times 10^{-35}
         return self.dr_dldt
 
 def SunEarthDistance(t_initial,t_total,resolution):
@@ -138,12 +146,8 @@ def SunEarthDistance(t_initial,t_total,resolution):
         
         astrometric_sun    = earth.at(tstep).observe(sun)
         lat, lon, distance = astrometric_sun.radec()
-        dtheory_sun[i]     = distance.m
+        dtheory_sun[i]     = distance.au
     
-
-    a     = (1.521e11 + 1.471e11)/2  #L = 1.5e11 meter
-    e     = (1.521e11 - 1.471e11)/(1.521e11 + 1.471e11)
-
     return dtheory_sun
 
 def IntegralLimit(e,m_e,lowt=-4,uppt=100):

@@ -31,7 +31,7 @@ class FrameWork(object):
         self.total_days = int(self.lastday-self.firstday)
         
         """ Nutrino Flux normalization :    from SNO"""
-        self.norm  = {'B8' : 5.25e-4}   #\times 10^{10}
+        self.norm  = 5.25   #\times 10^{6}
         
         """ Neutrino production point weight function : http://www.sns.ias.edu/~jnb/"""
         load_phi   = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack = True)
@@ -66,13 +66,13 @@ class FrameWork(object):
         self.energy_obs = np.array([[3.5,20.0]])
         self.resp_func = ResSu(self.energy_obs,self.energy_recoil)
         
-#        """ Unoscilated signal is produced to compare with the Super-Kamiokande results. For more info see their papers!
-#        number of target per kilo ton per year   :  365.25 * 24. * 6.0 * 6.0 * (10/18) \times 10^{6}/m_p -> 0.33 \times 10^{27} """
-#        self.detector = 365.25 * 24. * 6. * 6. * (10/18) * 1/m_p
-#        borom_spec,borom_total = BoromUnoscilated(self.t_e['B8'][0],self.e_nu['B8'][0],self.spec['B8'][0],g,m_e,self.uppt,self.data_su,self.res)
-#        self.borom_unoscilated_spectrum = self.det_su * (2 * np.pi/self.year) * 5.25e-4 * (self.a**2/self.h) * borom_spec
-#        self.borom_unoscilated_total    = self.det_su * (2 * np.pi/self.year) * 5.25e-4 * (self.a**2/self.h) * borom_total
-#
+        """ Unoscilated signal is produced to compare with the Super-Kamiokande results. For more info see their papers!
+        number of target per kilo ton per year   :  365.25 * 24. * 6.0 * 6.0 * (10/18) \times 10^{6}/m_p -> 365.25 * 24. * 6.0 * 6.0 * 0.33 \times 10^{33} """
+        
+        self.detector = 365.25 * 24. * 6. * 6. * (10/18) * 1/m_p
+        self.borom_unoscilated_total = BoromUnoscilated(self.energy_recoil,self.energy_nu,self.spectrum_nu,g,m_e,self.uppt,self.energy_obs,self.resp_func)
+        
+
     def __getitem__(self,getitem_pos):
         """ input is an array of survival probability. Its shape is (d,e) d is the number of days from initial day to the final day and e is the number of neutrino spectrum energy bin """
         survival_probablity_update,sterile_probablity_update = getitem_pos
@@ -103,8 +103,8 @@ class FrameWork(object):
                 r[:,z] = np.trapz(self.spectrum_nu[k:] * (cse*self.survival_probablity[:,k:] + csmu * (1 - self.survival_probablity[:,k:] - self.sterile_probablity[:,k:])),self.energy_nu[k:],axis=1)
                 k      = k + 1
         
-        self.dr_dldt = (self.norm['B8']/self.distance)[:,np.newaxis] * r #number of event per each delta theta per electron recoil times 10^{-35}
-        return self.dr_dldt
+        self.flux_predict = np.trapz((1./self.distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
+        return self.norm * self.flux_predict/self.borom_unoscilated_total
 
 def SunEarthDistance(t_initial,t_total,resolution):
     """Load the JPL ephemeris DE421 (covers 1900-2050).
@@ -188,9 +188,7 @@ def BoromUnoscilated(t,e,sp,g,m_e,uppt,data_su,res):
             
     for i in range(len(data_su)):
         num_event[i] = np.trapz(r*res[i],t)
-        
-    res_tot = ResSu(np.array([[data_su[0,0],data_su[-1,1]]]), t)
-    return num_event,np.trapz(r*res_tot[0],t)
+    return num_event
 
 def SuperkTotalEventPrediction(dr_dldt,frame):
     year     = frame.year

@@ -51,13 +51,12 @@ class FrameWork(object):
         self.uppt          = 100
         self.energy_recoil = IntegralLimit(spectrumB8[:,0],m_e,uppt=self.uppt)
         
-#        """ Super-Kamiokande Data event (count per year per  kilo ton) :"""
-#        self.su_nbin  = su_nbin
-#        self.data_su  = np.loadtxt('./Data/B8_Data_2020.txt')[:self.su_nbin,:]
+        """ Super-Kamiokande Data event (PhysRevLett.132.241803) :"""
+        self.data  = np.loadtxt('./Data/sksolartimevariation5804d.txt')
         
         """ geometric characteristic: resolution of d, the distance between sun and earth is considered to be one day """
         self.resolution = 1
-        self.distance   = SunEarthDistance(self.firstday,self.total_days,self.resolution)
+        self.distance, self.lat_sun  = SunEarthDistance(self.firstday,self.total_days,self.resolution)
         
         self.survival_probablity = np.zeros((self.total_days,len(self.energy_nu)))
         self.sterile_probablity  = np.zeros((self.total_days,len(self.energy_nu)))
@@ -114,6 +113,8 @@ def SunEarthDistance(t_initial,t_total,resolution):
     sun,earth   = planets['sun'],planets['earth']
     t_array     = np.arange(0,t_total,resolution)
     dtheory_sun = np.zeros(t_array.shape[0])
+    lat_sun = np.zeros(t_array.shape[0])
+    #lon_sun = np.zeros(t_array.shape[0])
     
     for i,dt in enumerate(t_array):
         tstep = t_initial + dt
@@ -121,8 +122,13 @@ def SunEarthDistance(t_initial,t_total,resolution):
         astrometric_sun    = earth.at(tstep).observe(sun)
         lat, lon, distance = astrometric_sun.radec()
         dtheory_sun[i]     = distance.au
+        lat_sun[i]         = lat._degrees
+        #lon_sun[i]         = lon._degrees
     
-    return dtheory_sun
+    lat_sun = lat_sun - lat_sun[dtheory_sun==np.min(dtheory_sun)]
+    lat_sun[lat_sun<0] = lat_sun[lat_sun<0] + 360
+    
+    return dtheory_sun, lat_sun
 
 def IntegralLimit(e,m_e,lowt=-4,uppt=100):
     mint = np.min(e)

@@ -30,9 +30,6 @@ class FrameWork(object):
         self.lastday = ts.utc(lastdate)
         self.total_days = int(self.lastday-self.firstday)
         
-        self.survival_probablity = np.zeros(())
-
-        
         """ Nutrino Flux normalization :    from SNO"""
         self.norm  = {'B8' : 5.25e-4}   #\times 10^{10}
         
@@ -41,18 +38,18 @@ class FrameWork(object):
         self.phi   = {'B8' : load_phi[6,:]}
         
         """ Electron density inside sun 10^{23}/cm^{3}"""
-        self.n_e  = 6*10**load_phi[2,:]
+        self.electron_numberdensity  = 6*10**load_phi[2,:]
         
         """ Neutrino energy spectrum : http://www.sns.ias.edu/~jnb/"""
-        spectrumB8    = np.loadtxt('./Spectrum/B8_spectrum.txt')
-        self.spectrum = {'B8' : spectrumB8[:,1]}
+        spectrumB8       = np.loadtxt('./Spectrum/B8_spectrum.txt')
+        self.spectrum_nu = spectrumB8[:,1]
         
         """ Neutrino energy in Mev"""
-        self.energy_nu       = {'B8' : spectrumB8[:,0]}
+        self.energy_nu   = spectrumB8[:,0]
         
         """ Electron recoil energy in Mev"""
         self.uppt          = 100
-        self.energy_recoil = {'B8'  : IntegralLimit(spectrumB8[:,0],m_e,uppt=self.uppt)}
+        self.energy_recoil = IntegralLimit(spectrumB8[:,0],m_e,uppt=self.uppt)
         
 #        """ Super-Kamiokande Data event (count per year per  kilo ton) :"""
 #        self.su_nbin  = su_nbin
@@ -62,14 +59,12 @@ class FrameWork(object):
         self.resolution = 1
         self.distance   = SunEarthDistance(self.firstday,self.total_days,self.resolution)
         
-        self.survival_probablity = np.zeros((self.total_days,len(self.e_nu['B8'])))
-        self.sterile_probablity  = np.zeros((self.total_days,len(self.e_nu['B8'])))
+        self.survival_probablity = np.zeros((self.total_days,len(self.energy_nu)))
+        self.sterile_probablity  = np.zeros((self.total_days,len(self.energy_nu)))
         
         """ Super-Kamiokande detector response function: PhysRevD.109.092001 """
         self.energy_obs = np.array([[3.5,20.0]])
-        self.resp_func = ResSu(self.energy_obs,self.t_e['B8'])
-        
-
+        self.resp_func = ResSu(self.energy_obs,self.energy_recoil)
         
 #        """ Unoscilated signal is produced to compare with the Super-Kamiokande results. For more info see their papers!
 #        number of target per kilo ton per year   :  365.25 * 24. * 6.0 * 6.0 * (10/18) \times 10^{6}/m_p -> 0.33 \times 10^{27} """
@@ -95,20 +90,20 @@ class FrameWork(object):
             else :
                 self.sterile_probablity = sterile_probablity_update
         
-        r = np.zeros((self.d.shape[0],t.shape[0]))
+        r = np.zeros((self.distance.shape[0],self.energy_recoil.shape[0]))
         k = 0
-        for z,ts in enumerate(self.t_e['B8']):
+        for z,ts in enumerate(self.energy_recoil):
             if z<=self.uppt:
-                cse    = DCS(g,m_e,e,ts,1)
-                csmu   = DCS(g,m_e,e,ts,-1)
-                r[:,z] = np.trapz(self.spec['B8'] * (cse*self.survival_probablity + csmu * (1-self.survival_probablity - self.sterile_probablity)),self.e_nu['B8'],axis=1)
+                cse    = DCS(g,m_e,self.energy_nu,ts,1)
+                csmu   = DCS(g,m_e,self.energy_nu,ts,-1)
+                r[:,z] = np.trapz(self.spectrum_nu * (cse*self.survival_probablity + csmu * (1-self.survival_probablity - self.sterile_probablity)),self.energy_nu,axis=1)
             else:
-                cse    = DCS(g,m_e,e[k:],ts,1)
-                csmu   = DCS(g,m_e,e[k:],ts,-1)
-                r[:,z] = np.trapz(self.spec['B8'][k:] * (cse*self.survival_probablity[:,k:] + csmu * (1 - self.survival_probablity[:,k:] - self.sterile_probablity[:,k:])),self.e_nu['B8'][k:],axis=1)
+                cse    = DCS(g,m_e,self.energy_nu[k:],ts,1)
+                csmu   = DCS(g,m_e,self.energy_nu[k:],ts,-1)
+                r[:,z] = np.trapz(self.spectrum_nu[k:] * (cse*self.survival_probablity[:,k:] + csmu * (1 - self.survival_probablity[:,k:] - self.sterile_probablity[:,k:])),self.energy_nu[k:],axis=1)
                 k      = k + 1
         
-        self.dr_dldt = (self.norm['B8']/self.d)[:,np.newaxis] * r #number of event per each delta theta per electron recoil times 10^{-35}
+        self.dr_dldt = (self.norm['B8']/self.distance)[:,np.newaxis] * r #number of event per each delta theta per electron recoil times 10^{-35}
         return self.dr_dldt
 
 def SunEarthDistance(t_initial,t_total,resolution):
@@ -169,10 +164,10 @@ def DCS(g, m_e, e_nu, t_e, i=1):
     return  2 * g**2 * (m_e/np.pi) * (a1 + a2 - a3) * 10 #\times 10^{-45} in cm^2
 
 def ResSu(energy_obs, energy_recoil):
-    r   = np.zeros((data.shape[0],t_e.shape[0]))
-    for j in range (data.shape[0]):
-        e_nu = np.linspace(data[j,0],data[j,1])
-        for i,t in enumerate(t_e):
+    r   = np.zeros((energy_obs.shape[0],energy_recoil.shape[0]))
+    for j in range (energy_obs.shape[0]):
+        e_nu = np.linspace(energy_obs[j,0],energy_obs[j,1])
+        for i,t in enumerate(energy_recoil):
             sig  = (-0.05525+0.3162*np.sqrt(t)+0.04572*t)
             a    = (1/(np.sqrt(2*np.pi)*sig))*np.exp(-0.5*(t-e_nu)**2/sig**2)
             r[j,i] = np.trapz(a,e_nu)

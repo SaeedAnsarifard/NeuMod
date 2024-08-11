@@ -26,8 +26,8 @@ class FrameWork(object):
         firstdate = datetime(int(firstdate[0]),int(firstdate[1]),int(firstdate[2]),0,0,0,tzinfo=utc)
         lastdate  = datetime(int(lastdate[0]),int(lastdate[1]),int(lastdate[2]),0,0,0,tzinfo=utc)
         
-        self.firstday= ts.utc(firstdate)
-        self.lastday = ts.utc(lastdate)
+        self.firstday   = ts.utc(firstdate)
+        self.lastday    = ts.utc(lastdate)
         self.total_days = int(self.lastday-self.firstday)
         
         """ Nutrino Flux normalization :    from SNO"""
@@ -52,7 +52,15 @@ class FrameWork(object):
         self.energy_recoil = IntegralLimit(spectrumB8[:,0],m_e,uppt=self.uppt)
         
         """ Super-Kamiokande Data event (PhysRevLett.132.241803) :"""
-        self.data  = np.loadtxt('./Data/sksolartimevariation5804d.txt')
+        self.data      = np.loadtxt('./Data/sksolartimevariation5804d.txt')
+        self.data[:,0] = self.data[:,0]/(60.*60.*24.)
+        self.data[:,1] = self.data[:,1]/(60.*60.*24.)
+        self.data[:,2] = self.data[:,2]/(60.*60.*24.)
+        
+        t0        = ts.utc(datetime(1970,1,1,0,0,0,tzinfo=utc))
+        zeroday   = self.firstday.tt - t0.tt
+        self.data = self.data[self.data[:,0]-self.data[:,1]>=zeroday]
+        self.data[:,0] = self.data[:,0] - zeroday
         
         """ geometric characteristic: resolution of d, the distance between sun and earth is considered to be one day """
         self.resolution = 1
@@ -196,39 +204,14 @@ def BoromUnoscilated(t,e,sp,g,m_e,uppt,data_su,res):
         num_event[i] = np.trapz(r*res[i],t)
     return num_event
 
-def SuperkTotalEventPrediction(dr_dldt,frame):
-    year     = frame.year
-    theta    = frame.theta
-    detector = frame.det_su
-    len_m12  = len(dr_dldt)
-    res = ResSu(np.array([[frame.data_su[0,0],frame.data_su[-1,1]]]), frame.t_e['B8'][0])
-    num_event= np.zeros((len_m12))
-    for i in range(len_m12):
-        dr_dl        =  detector * np.trapz(dr_dldt[i]['B8'][0]*res[0],frame.t_e['B8'][0],axis=1)
-        num_event[i] = np.trapz(dr_dl,theta,axis=0)/year
-    return num_event
-    
-def SuperkSpectrumEventPrediction(dr_dldt,t,year,theta,detector,b8_un,res):
-    num_event = np.zeros((theta.shape[0],b8_un.shape[0]))
-    for i in range(b8_un.shape[0]):
-        num_event[:,i] = (detector/b8_un[i]) * np.trapz(dr_dldt*res[i],t,axis=1)
-    return np.trapz(num_event,theta,axis=0)/year
+def SuperkPrediction(data,total_days,prediction,distance):
+    day_array = np.arange(0,total_days,1)
+    bin_prediction = np.zeros(len(data))
+    dbin_prediction = np.zeros(len(data))
+    for i,day in enumerate (data[:,0]):
+        condition = (day_array >= day - data[i,1]) & (day_array <= day + data[i,2])
+        bin_prediction[i] = np.mean(prediction[condition])
+        dbin_prediction[i] = np.mean(distance[condition])
+    return bin_prediction,dbin_prediction
 
-def AveragedPerdiction(dr_dldt,frame):
-    t_e        = frame.t_e
-    year       = frame.year
-    theta      = frame.theta
-    det_su     = frame.det_su
-    b8_un      = frame.borom_unoscilated_spectrum
-    res        = frame.res
-    components = frame.components
-    len_m12    = len(dr_dldt)
-    pred_bo    = np.zeros((len_m12,3))
-    pred_su    = np.zeros((len_m12,b8_un.shape[0]))
-    for i in range(len_m12):
-        #Borexino
-        for k,c in enumerate (components[:-1]):
-            pred_bo[i,k] = BorexinoTotalEventPrediction(dr_dldt[i][c],t_e[c],year,theta)
-        #SuperKamiokande
-        pred_su[i] = SuperkSpectrumEventPrediction(dr_dldt[i]['B8'][0],t_e['B8'][0],year,theta,det_su,b8_un,res)
-    return pred_bo,pred_su
+

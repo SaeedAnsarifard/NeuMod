@@ -3,18 +3,19 @@ import numpy as np
 from datetime import datetime
 from skyfield.api import load, utc
 
-"""Create a timescale."""
-ts     = load.timescale()
-"""Fermi constant :  1.166 \times 10^{-11}/Mev^2"""
-f_c    = 1.166
+
+global g , m_e , time_scale
+
+""" h_{bar}c : 1.97 10^{-11} Mev.cm , Fermi constant :  1.166 \times 10^{-11}/Mev^2 """
+g  = 1.97 * 1.166
+
 """Electron mass : 0.511 Mev"""
-m_e    = 0.511
-"""h_{bar}c : 1.97 10^{-11} Mev.cm"""
-hbarc  = 1.97
-"""proton mass :  1.67 \times 10^{-27} kg"""
-m_p    = 1.67
-g      = hbarc * f_c
-    
+m_e = 0.511
+
+"""Create a timescale."""
+time_scale  = load.timescale()
+
+
 class FrameWork(object):
     """Computing B8 prediction in unit of [10^-6 cm^-2 s^-1] at each day from day initial to day final in counts per day per kilo ton, according to the Super-Kamiokande experiment response function.
     inputs are date for initial and final days, in the format of 'year,month,day' """
@@ -26,20 +27,13 @@ class FrameWork(object):
         firstdate = datetime(int(firstdate[0]),int(firstdate[1]),int(firstdate[2]),0,0,0,tzinfo=utc)
         lastdate  = datetime(int(lastdate[0]),int(lastdate[1]),int(lastdate[2]),0,0,0,tzinfo=utc)
         
-        self.firstday   = ts.utc(firstdate)
-        self.lastday    = ts.utc(lastdate)
+        self.firstday   = time_scale.utc(firstdate)
+        self.lastday    = time_scale.utc(lastdate)
         self.total_days = int(self.lastday-self.firstday)
         
         """ Nutrino Flux normalization :    from SNO"""
         self.norm  = 5.25   #\times 10^{6}
-        
-        """ Neutrino production point weight function : http://www.sns.ias.edu/~jnb/"""
-        load_phi   = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack = True)
-        self.phi   = {'B8' : load_phi[6,:]}
-        
-        """ Electron density inside sun 10^{23}/cm^{3}"""
-        self.electron_numberdensity  = 6*10**load_phi[2,:]
-        
+                
         """ Neutrino energy spectrum : http://www.sns.ias.edu/~jnb/"""
         spectrumB8       = np.loadtxt('./Spectrum/B8_spectrum.txt')
         self.spectrum_nu = spectrumB8[:,1]
@@ -49,7 +43,7 @@ class FrameWork(object):
         
         """ Electron recoil energy in Mev"""
         self.uppt          = 100
-        self.energy_recoil = IntegralLimit(spectrumB8[:,0],m_e,uppt=self.uppt)
+        self.energy_recoil = IntegralLimit(spectrumB8[:,0],uppt=self.uppt)
         
         """ Super-Kamiokande Data event (PhysRevLett.132.241803) :"""
         self.data      = np.loadtxt('./Data/sksolartimevariation5804d.txt')
@@ -57,7 +51,7 @@ class FrameWork(object):
         self.data[:,1] = self.data[:,1]/(60.*60.*24.)
         self.data[:,2] = self.data[:,2]/(60.*60.*24.)
         
-        t0        = ts.utc(datetime(1970,1,1,0,0,0,tzinfo=utc))
+        t0        = time_scale.utc(datetime(1970,1,1,0,0,0,tzinfo=utc))
         zeroday   = self.firstday.tt - t0.tt
         self.data = self.data[self.data[:,0]-self.data[:,1]>=zeroday]
         self.data[:,0] = self.data[:,0] - zeroday
@@ -74,7 +68,7 @@ class FrameWork(object):
         self.resp_func = ResSu(self.energy_obs,self.energy_recoil)
         
         """ Unoscilated signal is produced to compare with the Super-Kamiokande results. the unit is [10^-45 cm^2]. For more info see their papers! """
-        self.borom_unoscilated_total = BoromUnoscilated(self.energy_recoil,self.energy_nu,self.spectrum_nu,g,m_e,self.uppt,self.energy_obs,self.resp_func)
+        self.borom_unoscilated_total = BoromUnoscilated(self.energy_recoil,self.energy_nu,self.spectrum_nu,g,self.uppt,self.energy_obs,self.resp_func)
         
 
     def __getitem__(self,getitem_pos):
@@ -98,12 +92,12 @@ class FrameWork(object):
         k = 0
         for z,ts in enumerate(self.energy_recoil):
             if z<=self.uppt:
-                cse    = DCS(g,m_e,self.energy_nu,ts,1)
-                csmu   = DCS(g,m_e,self.energy_nu,ts,-1)
+                cse    = DCS(self.energy_nu,ts,1)
+                csmu   = DCS(self.energy_nu,ts,-1)
                 r[:,z] = np.trapz(self.spectrum_nu * (cse*self.survival_probablity + csmu * (1-self.survival_probablity - self.sterile_probablity)),self.energy_nu,axis=1)
             else:
-                cse    = DCS(g,m_e,self.energy_nu[k:],ts,1)
-                csmu   = DCS(g,m_e,self.energy_nu[k:],ts,-1)
+                cse    = DCS(self.energy_nu[k:],ts,1)
+                csmu   = DCS(self.energy_nu[k:],ts,-1)
                 r[:,z] = np.trapz(self.spectrum_nu[k:] * (cse*self.survival_probablity[:,k:] + csmu * (1 - self.survival_probablity[:,k:] - self.sterile_probablity[:,k:])),self.energy_nu[k:],axis=1)
                 k      = k + 1
         
@@ -119,9 +113,7 @@ def SunEarthDistance(t_initial,t_total,resolution):
     t_array     = np.arange(0,t_total,resolution)
     dtheory_sun = np.zeros(t_array.shape[0])
     day_sun     = np.zeros(t_array.shape[0])
-    #lat_sun = np.zeros(t_array.shape[0])
-    #lon_sun = np.zeros(t_array.shape[0])
-    
+ 
     for i,dt in enumerate(t_array):
         tstep = t_initial + dt
         
@@ -130,22 +122,18 @@ def SunEarthDistance(t_initial,t_total,resolution):
         dtheory_sun[i]     = distance.au
         
         day_sun[i]         = np.mod(dt,365.25)/365.25   # :)
-        #lat_sun[i]         = lat.radians
-        #lon_sun[i]         = lon._degrees
-    
-    #lat_sun = lat_sun - lat_sun[dtheory_sun==np.min(dtheory_sun)]
-    #lat_sun[lat_sun<0] = lat_sun[lat_sun<0] + 360
+
     day_sun = day_sun - day_sun[dtheory_sun==np.min(dtheory_sun)]
     day_sun[day_sun<0] = day_sun[day_sun<0] + 1
     return dtheory_sun, day_sun
 
-def IntegralLimit(e,m_e,lowt=-4,uppt=100):
+def IntegralLimit(e, lowt=-4, uppt=100):
     mint = np.min(e)
     maxt = np.max(e)
     mint = np.log10(mint/(1+m_e/(2*mint)))
     return np.concatenate((np.logspace(lowt,mint,uppt),e[1:]/(1+m_e/(2*e[1:]))))
         
-def DCS(g, m_e, e_nu, t_e, i=1):
+def DCS(e_nu, t_e, i=1):
     #dsigma/dT_e as function of T_e and E_nu (electron recoil and neutrino energy)
 
     #weak mixing angle = 0.22342 : https://pdg.lbl.gov/2019/reviews/rpp2019-rev-standard-model.pdf
@@ -188,16 +176,16 @@ def ResSu(energy_obs, energy_recoil):
             r[j,i] = np.trapz(a,e_nu)
     return r
     
-def BoromUnoscilated(t,e,sp,g,m_e,uppt,data_su,res):
+def BoromUnoscilated(t, e, sp, g, uppt, data_su, res):
     r         = np.zeros(t.shape)
     num_event = np.zeros(len(data_su))
     k         = 0
     for z,ts in enumerate(t):
         if z<=uppt:
-            cse  = DCS(g,m_e,e,ts,1)
+            cse  = DCS(e,ts,1)
             r[z] = np.trapz(sp*cse,e)
         else:
-            cse  = DCS(g,m_e,e[k:],ts,1)
+            cse  = DCS(e[k:],ts,1)
             r[z] = np.trapz(sp[k:]*cse,e[k:])
             k    = k + 1
             
@@ -205,7 +193,7 @@ def BoromUnoscilated(t,e,sp,g,m_e,uppt,data_su,res):
         num_event[i] = np.trapz(r*res[i],t)
     return num_event
 
-def SuperkPrediction(data,total_days,prediction,distance,latitude):
+def SuperkPrediction(data,total_days,prediction,distance):
     day_array    = np.arange(0,total_days,1)
     bin_predict  = np.zeros(len(data))
     dist_predict = np.zeros(len(data))
@@ -216,8 +204,7 @@ def SuperkPrediction(data,total_days,prediction,distance,latitude):
         bin_predict[i]  = np.mean(prediction[condition])
         dist_predict[i] = np.mean(distance[condition])
         day_predict[i]  = np.mod(day,365.25)/365.25
-        #lati_predict[i] = np.mean(latitude[condition])
-        #std_predict[i]  = np.std(latitude[condition])
+
     day_predict = day_predict - day_predict[dist_predict==np.min(dist_predict)]
     day_predict[day_predict<0] = day_predict[day_predict<0] + 1
     return bin_predict,dist_predict,day_predict

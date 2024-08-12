@@ -60,8 +60,8 @@ class FrameWork(object):
         self.resolution = 1
         self.distance, self.day  = SunEarthDistance(self.firstday,self.total_days,self.resolution)
         
-        self.survival_probablity = np.zeros((self.total_days,len(self.energy_nu)))
-        self.sterile_probablity  = np.zeros((self.total_days,len(self.energy_nu)))
+        #self.survival_probablity = np.zeros((self.total_days,len(self.energy_nu)))
+        #self.sterile_probablity  = np.zeros((self.total_days,len(self.energy_nu)))
         
         """ Super-Kamiokande detector response function: PhysRevD.109.092001 """
         self.energy_obs = np.array([[4.5,19.5]])
@@ -73,35 +73,23 @@ class FrameWork(object):
 
     def __getitem__(self,getitem_pos):
         """ input is an array of survival probability. Its shape is (d,e) d is the number of days from initial day to the final day and e is the number of neutrino spectrum energy bin """
-        survival_probablity_update,sterile_probablity_update = getitem_pos
         
-        if (survival_probablity_update.shape != self.survival_probablity.shape):
-            raise Exception("Survival Probablity shape not match")
-        else :
-            self.survival_probablity = survival_probablity_update
-            
-        if sterile_probablity_update == 0:
-            sterile_probablity = 0
-        else :
-            if (sterlie_probablity_update.shape != self.sterile_probablity.shape):
-                raise Exception("Sterile Probablity shape not match")
-            else :
-                self.sterile_probablity = sterile_probablity_update
-        
-        r = np.zeros((self.distance.shape[0],self.energy_recoil.shape[0]))
+        survival_probablity, sterile_probablity, distance = getitem_pos
+    
+        r = np.zeros((distance.shape[0],self.energy_recoil.shape[0]))
         k = 0
         for z,ts in enumerate(self.energy_recoil):
             if z<=self.uppt:
                 cse    = DCS(self.energy_nu,ts,1)
                 csmu   = DCS(self.energy_nu,ts,-1)
-                r[:,z] = np.trapz(self.spectrum_nu * (cse*self.survival_probablity + csmu * (1-self.survival_probablity - self.sterile_probablity)),self.energy_nu,axis=1)
+                r[:,z] = np.trapz(self.spectrum_nu * (cse * survival_probablity + csmu * (1 - survival_probablity - sterile_probablity)), self.energy_nu,axis=1)
             else:
                 cse    = DCS(self.energy_nu[k:],ts,1)
                 csmu   = DCS(self.energy_nu[k:],ts,-1)
-                r[:,z] = np.trapz(self.spectrum_nu[k:] * (cse*self.survival_probablity[:,k:] + csmu * (1 - self.survival_probablity[:,k:] - self.sterile_probablity[:,k:])),self.energy_nu[k:],axis=1)
+                r[:,z] = np.trapz(self.spectrum_nu[k:] * (cse * survival_probablity[:,k:] + csmu * (1 - survival_probablity[:,k:] - sterile_probablity[:,k:])), self.energy_nu[k:],axis=1)
                 k      = k + 1
         
-        self.flux_fraction_prediction = np.trapz((1./self.distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
+        self.flux_fraction_prediction = np.trapz((1./distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
         return (self.norm/self.borom_unoscilated_total) * self.flux_fraction_prediction
 
 def SunEarthDistance(t_initial,t_total,resolution):

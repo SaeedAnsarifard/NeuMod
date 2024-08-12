@@ -16,7 +16,7 @@ m_p    = 1.67
 g      = hbarc * f_c
     
 class FrameWork(object):
-    """Computing B8 total event rate at each day from day initial to day final in counts per day per kilo ton, according to the Super-Kamiokande experiment response function.
+    """Computing B8 prediction in unit of [10^-6 cm^-2 s^-1] at each day from day initial to day final in counts per day per kilo ton, according to the Super-Kamiokande experiment response function.
     inputs are date for initial and final days, in the format of 'year,month,day' """
     
     def __init__(self, first_day='2008,9,15', last_day= '2018,5,30'):
@@ -64,19 +64,16 @@ class FrameWork(object):
         
         """ geometric characteristic: resolution of d, the distance between sun and earth is considered to be one day """
         self.resolution = 1
-        self.distance, self.lat_sun  = SunEarthDistance(self.firstday,self.total_days,self.resolution)
+        self.distance, self.day  = SunEarthDistance(self.firstday,self.total_days,self.resolution)
         
         self.survival_probablity = np.zeros((self.total_days,len(self.energy_nu)))
         self.sterile_probablity  = np.zeros((self.total_days,len(self.energy_nu)))
         
         """ Super-Kamiokande detector response function: PhysRevD.109.092001 """
-        self.energy_obs = np.array([[3.5,20.0]])
+        self.energy_obs = np.array([[4.5,19.5]])
         self.resp_func = ResSu(self.energy_obs,self.energy_recoil)
         
-        """ Unoscilated signal is produced to compare with the Super-Kamiokande results. For more info see their papers!
-        number of target per kilo ton per year   :  365.25 * 24. * 6.0 * 6.0 * (10/18) \times 10^{6}/m_p -> 365.25 * 24. * 6.0 * 6.0 * 0.33 \times 10^{33} """
-        
-        self.detector = 365.25 * 24. * 6. * 6. * (10/18) * 1/m_p
+        """ Unoscilated signal is produced to compare with the Super-Kamiokande results. the unit is [10^-45 cm^2]. For more info see their papers! """
         self.borom_unoscilated_total = BoromUnoscilated(self.energy_recoil,self.energy_nu,self.spectrum_nu,g,m_e,self.uppt,self.energy_obs,self.resp_func)
         
 
@@ -110,8 +107,8 @@ class FrameWork(object):
                 r[:,z] = np.trapz(self.spectrum_nu[k:] * (cse*self.survival_probablity[:,k:] + csmu * (1 - self.survival_probablity[:,k:] - self.sterile_probablity[:,k:])),self.energy_nu[k:],axis=1)
                 k      = k + 1
         
-        self.flux_predict = np.trapz((1./self.distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
-        return self.norm * self.flux_predict/self.borom_unoscilated_total
+        self.flux_fraction_prediction = np.trapz((1./self.distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
+        return (self.norm/self.borom_unoscilated_total) * self.flux_fraction_prediction
 
 def SunEarthDistance(t_initial,t_total,resolution):
     """Load the JPL ephemeris DE421 (covers 1900-2050).
@@ -121,7 +118,8 @@ def SunEarthDistance(t_initial,t_total,resolution):
     sun,earth   = planets['sun'],planets['earth']
     t_array     = np.arange(0,t_total,resolution)
     dtheory_sun = np.zeros(t_array.shape[0])
-    lat_sun = np.zeros(t_array.shape[0])
+    day_sun     = np.zeros(t_array.shape[0])
+    #lat_sun = np.zeros(t_array.shape[0])
     #lon_sun = np.zeros(t_array.shape[0])
     
     for i,dt in enumerate(t_array):
@@ -130,13 +128,16 @@ def SunEarthDistance(t_initial,t_total,resolution):
         astrometric_sun    = earth.at(tstep).observe(sun)
         lat, lon, distance = astrometric_sun.radec()
         dtheory_sun[i]     = distance.au
-        lat_sun[i]         = lat._degrees
+        
+        day_sun[i]         = np.mod(dt,365.25)/365.25   # :)
+        #lat_sun[i]         = lat.radians
         #lon_sun[i]         = lon._degrees
     
-    lat_sun = lat_sun - lat_sun[dtheory_sun==np.min(dtheory_sun)]
-    lat_sun[lat_sun<0] = lat_sun[lat_sun<0] + 360
-    
-    return dtheory_sun, lat_sun
+    #lat_sun = lat_sun - lat_sun[dtheory_sun==np.min(dtheory_sun)]
+    #lat_sun[lat_sun<0] = lat_sun[lat_sun<0] + 360
+    day_sun = day_sun - day_sun[dtheory_sun==np.min(dtheory_sun)]
+    day_sun[day_sun<0] = day_sun[day_sun<0] + 1
+    return dtheory_sun, day_sun
 
 def IntegralLimit(e,m_e,lowt=-4,uppt=100):
     mint = np.min(e)
@@ -204,14 +205,21 @@ def BoromUnoscilated(t,e,sp,g,m_e,uppt,data_su,res):
         num_event[i] = np.trapz(r*res[i],t)
     return num_event
 
-def SuperkPrediction(data,total_days,prediction,distance):
-    day_array = np.arange(0,total_days,1)
-    bin_prediction = np.zeros(len(data))
-    dbin_prediction = np.zeros(len(data))
+def SuperkPrediction(data,total_days,prediction,distance,latitude):
+    day_array    = np.arange(0,total_days,1)
+    bin_predict  = np.zeros(len(data))
+    dist_predict = np.zeros(len(data))
+    day_predict  = np.zeros(len(data))
+
     for i,day in enumerate (data[:,0]):
         condition = (day_array >= day - data[i,1]) & (day_array <= day + data[i,2])
-        bin_prediction[i] = np.mean(prediction[condition])
-        dbin_prediction[i] = np.mean(distance[condition])
-    return bin_prediction,dbin_prediction
+        bin_predict[i]  = np.mean(prediction[condition])
+        dist_predict[i] = np.mean(distance[condition])
+        day_predict[i]  = np.mod(day,365.25)/365.25
+        #lati_predict[i] = np.mean(latitude[condition])
+        #std_predict[i]  = np.std(latitude[condition])
+    day_predict = day_predict - day_predict[dist_predict==np.min(dist_predict)]
+    day_predict[day_predict<0] = day_predict[day_predict<0] + 1
+    return bin_predict,dist_predict,day_predict
 
 

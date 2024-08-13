@@ -180,21 +180,21 @@ def BoromUnoscilated(t, e, sp, g, uppt, data_su, res):
     for i in range(len(data_su)):
         num_event[i] = np.trapz(r*res[i],t)
     return num_event
-
-def SuperkPrediction(data,total_days,prediction,distance):
-    day_array    = np.arange(0,total_days,1)
-    bin_predict  = np.zeros(len(data))
-    dist_predict = np.zeros(len(data))
-    day_predict  = np.zeros(len(data))
-
-    for i,day in enumerate (data[:,0]):
-        condition = (day_array >= day - data[i,1]) & (day_array <= day + data[i,2])
-        bin_predict[i]  = np.mean(prediction[condition])
-        dist_predict[i] = np.mean(distance[condition])
-        day_predict[i]  = np.mod(day,365.25)/365.25
-
-    day_predict = day_predict - day_predict[dist_predict==np.min(dist_predict)]
-    day_predict[day_predict<0] = day_predict[day_predict<0] + 1
-    return bin_predict,dist_predict,day_predict
+#
+#def SuperkPrediction(data,total_days,prediction,distance):
+#    day_array    = np.arange(0,total_days,1)
+#    bin_predict  = np.zeros(len(data))
+#    dist_predict = np.zeros(len(data))
+#    day_predict  = np.zeros(len(data))
+#
+#    for i,day in enumerate (data[:,0]):
+#        condition = (day_array >= day - data[i,1]) & (day_array <= day + data[i,2])
+#        bin_predict[i]  = np.mean(prediction[condition])
+#        dist_predict[i] = np.mean(distance[condition])
+#        day_predict[i]  = np.mod(day,365.25)/365.25
+#
+#    day_predict = day_predict - day_predict[dist_predict==np.min(dist_predict)]
+#    day_predict[day_predict<0] = day_predict[day_predict<0] + 1
+#    return bin_predict,dist_predict,day_predict
 
 

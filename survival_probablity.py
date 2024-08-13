@@ -1,4 +1,7 @@
 import numpy as np
+from framework import FrameWork
+from cobaya.run import run
+from scipy import interpolate
 
 global f_c , m_e, hbarc, phi, n_e
 
@@ -19,8 +22,8 @@ phi      = load_phi[6,:]
 n_e  = 6*10**load_phi[2,:]
 
 def PseudoDirac(param,enu):
-
-    ls  = 1.496e11*np.linspace(0.983,1.017,100)
+    ls_au = np.linspace(0.983,1.017,75)
+    ls   = 1.496e11 * ls_au
     #enu = np.logspace(-1,1.3,100)
     pel = np.zeros((ls.shape[0],enu.shape[0]))
     psl = np.zeros((ls.shape[0],enu.shape[0]))
@@ -52,5 +55,4 @@ def PseudoDirac(param,enu):
         pes = as1 + as2 + as3
         psl[j]  = np.sum(np.reshape(phi,(n_e.shape[0],1))*pes,axis=0)
 
-    return pel, psl, np.linspace(0.983,1.017,100)
-
+    return pel, psl, ls_au

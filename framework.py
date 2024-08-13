@@ -2,7 +2,7 @@ import numpy as np
 
 from datetime import datetime
 from skyfield.api import load, utc
-
+from survival_probablity import PseudoDirac
 
 global g , m_e , time_scale
 
@@ -20,7 +20,7 @@ class FrameWork(object):
     """Computing B8 prediction in unit of [10^-6 cm^-2 s^-1] at each day from day initial to day final in counts per day per kilo ton, according to the Super-Kamiokande experiment response function.
     inputs are date for initial and final days, in the format of 'year,month,day' """
     
-    def __init__(self, first_day='2008,9,15', last_day= '2018,5,30'):
+    def __init__(self, do_binning=True, first_day='2008,9,15', last_day= '2018,5,30'):
         firstdate = first_day.split(',')
         lastdate  = last_day.split(',')
         
@@ -56,26 +56,34 @@ class FrameWork(object):
         self.data = self.data[self.data[:,0]-self.data[:,1]>=zeroday]
         self.data[:,0] = self.data[:,0] - zeroday
         
+        if do_binning :
+            self.data = Binning(self.data)
+        
         """ geometric characteristic: resolution of d, the distance between sun and earth is considered to be one day """
         self.resolution = 1
         self.distance, self.day  = SunEarthDistance(self.firstday,self.total_days,self.resolution)
-        
-        #self.survival_probablity = np.zeros((self.total_days,len(self.energy_nu)))
-        #self.sterile_probablity  = np.zeros((self.total_days,len(self.energy_nu)))
         
         """ Super-Kamiokande detector response function: PhysRevD.109.092001 """
         self.energy_obs = np.array([[4.5,19.5]])
         self.resp_func = ResSu(self.energy_obs,self.energy_recoil)
         
         """ Unoscilated signal is produced to compare with the Super-Kamiokande results. the unit is [10^-45 cm^2]. For more info see their papers! """
-        self.borom_unoscilated_total = BoromUnoscilated(self.energy_recoil,self.energy_nu,self.spectrum_nu,g,self.uppt,self.energy_obs,self.resp_func)
+        self.borom_unoscilated_total = BoromUnoscilated(self.energy_recoil,self.energy_nu,self.spectrum_nu,self.uppt,self.energy_obs,self.resp_func)
         
+        self.param = {'T12' : 34, 'T13' : 8.57, 'mum1': 0., 'mum2': 0, 'mum3': 0., 'M12' : 7.54e-5 }
 
-    def __getitem__(self,getitem_pos):
+    def __getitem__(self,param_update):
         """ input is an array of survival probability. Its shape is (d,e) d is the number of days from initial day to the final day and e is the number of neutrino spectrum energy bin """
         
-        survival_probablity, sterile_probablity, distance = getitem_pos
-    
+        t12,mum2,m12 = param_update
+        
+        self.param['T12']  = t12
+        self.param['mum2'] = mum2
+        self.param['M12']  = m12
+        
+        distance  = np.sqrt(self.data[:,0])
+        
+        survival_probablity, sterile_probablity  = PseudoDirac(self.param,distance,self.energy_nu)
         r = np.zeros((distance.shape[0],self.energy_recoil.shape[0]))
         k = 0
         for z,ts in enumerate(self.energy_recoil):
@@ -164,9 +172,9 @@ def ResSu(energy_obs, energy_recoil):
             r[j,i] = np.trapz(a,e_nu)
     return r
     
-def BoromUnoscilated(t, e, sp, g, uppt, data_su, res):
+def BoromUnoscilated(t, e, sp, uppt, t_obs, res):
     r         = np.zeros(t.shape)
-    num_event = np.zeros(len(data_su))
+    num_event = np.zeros(len(t_obs))
     k         = 0
     for z,ts in enumerate(t):
         if z<=uppt:
@@ -177,12 +185,21 @@ def BoromUnoscilated(t, e, sp, g, uppt, data_su, res):
             r[z] = np.trapz(sp[k:]*cse,e[k:])
             k    = k + 1
             
-    for i in range(len(data_su)):
+    for i in range(len(t_obs)):
         num_event[i] = np.trapz(r*res[i],t)
     return num_event
     
-    
-    
+def Binning(data):
+    error = np.mean(data[:,4:6],axis=1)
+    data_new = [[],[],[],[]]
+    d_unique = np.unique(data[:,6])
+    for i in range(0,len(d_unique)-1,2):
+        cond = (data[:,6] == d_unique[i])|(data[:,6] == d_unique[i+1])
+        data_new[0].append(0.5*(d_unique[i]+d_unique[i+1]))
+        data_new[1].append(np.mean(data[cond,3]))
+        data_new[2].append(np.sqrt(np.sum(error[cond]**2))/len(error[cond]))
+        data_new[3].append(0.5*(d_unique[i]-d_unique[i+1]))
+    return np.array(data_new).T
     
 #
 #def SuperkPrediction(data,total_days,prediction,distance):

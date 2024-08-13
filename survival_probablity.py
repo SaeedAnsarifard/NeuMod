@@ -18,9 +18,9 @@ phi      = load_phi[6,:]
 """ Electron number density inside sun 10^{23}/cm^{3}"""
 n_e  = 6*10**load_phi[2,:]
 
-def PseudoDirac(param,enu):
-    ls_au = np.linspace(0.983,1.017,75)
-    ls   = 1.496e11 * ls_au
+def PseudoDirac(param,ls,enu):
+    #ls_au = np.linspace(0.983,1.017,75)
+    ls   = 1.496e11 * ls
     #enu = np.logspace(-1,1.3,100)
     pel = np.zeros((ls.shape[0],enu.shape[0]))
     psl = np.zeros((ls.shape[0],enu.shape[0]))
@@ -52,4 +52,4 @@ def PseudoDirac(param,enu):
         pes = as1 + as2 + as3
         psl[j]  = np.sum(np.reshape(phi,(n_e.shape[0],1))*pes,axis=0)
 
-    return pel, psl, ls_au
+    return pel, psl

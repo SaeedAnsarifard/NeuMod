@@ -36,14 +36,15 @@ class FrameWork(object):
                 
         """ Neutrino energy spectrum : http://www.sns.ias.edu/~jnb/"""
         spectrumB8       = np.loadtxt('./Spectrum/B8_spectrum.txt')
-        self.spectrum_nu = spectrumB8[:,1]
+        self.spectrum_nu = spectrumB8[spectrumB8[:,0]>=2,1]
         
         """ Neutrino energy in Mev"""
-        self.energy_nu   = spectrumB8[:,0]
+        self.energy_nu   = spectrumB8[spectrumB8[:,0]>=2,0]
         
         """ Electron recoil energy in Mev"""
-        self.uppt          = 100
-        self.energy_recoil = IntegralLimit(spectrumB8[:,0],uppt=self.uppt)
+        #self.uppt          = 100
+        #self.energy_recoil = IntegralLimit(spectrumB8[:,0],uppt=self.uppt)
+        self.energy_recoil =  self.energy_nu/(1 + m_e / (2 * self.energy_nu))
         
         """ Super-Kamiokande Data event (PhysRevLett.132.241803) :"""
         self.data      = np.loadtxt('./Data/sksolartimevariation5804d.txt')
@@ -68,7 +69,7 @@ class FrameWork(object):
         self.resp_func = ResSu(self.energy_obs,self.energy_recoil)
         
         """ Unoscilated signal is produced to compare with the Super-Kamiokande results. the unit is [10^-45 cm^2]. For more info see their papers! """
-        self.borom_unoscilated_total = BoromUnoscilated(self.energy_recoil,self.energy_nu,self.spectrum_nu,self.uppt,self.energy_obs,self.resp_func)
+        self.borom_unoscilated_total = BoromUnoscilated(self.energy_recoil,self.energy_nu,self.spectrum_nu,self.energy_obs,self.resp_func)
         
         self.param = {'T12' : 34, 'T13' : 8.57, 'mum1': 0., 'mum2': 0, 'mum3': 0., 'M12' : 7.54e-5 }
 
@@ -86,16 +87,22 @@ class FrameWork(object):
         survival_probablity, sterile_probablity  = PseudoDirac(self.param,distance,self.energy_nu)
         r = np.zeros((distance.shape[0],self.energy_recoil.shape[0]))
         k = 0
+#        for z,ts in enumerate(self.energy_recoil):
+#            if z<=self.uppt:
+#                cse    = DCS(self.energy_nu,ts,1)
+#                csmu   = DCS(self.energy_nu,ts,-1)
+#                r[:,z] = np.trapz(self.spectrum_nu * (cse * survival_probablity + csmu * (1 - survival_probablity - sterile_probablity)), self.energy_nu,axis=1)
+#            else:
+#                cse    = DCS(self.energy_nu[k:],ts,1)
+#                csmu   = DCS(self.energy_nu[k:],ts,-1)
+#                r[:,z] = np.trapz(self.spectrum_nu[k:] * (cse * survival_probablity[:,k:] + csmu * (1 - survival_probablity[:,k:] - sterile_probablity[:,k:])), self.energy_nu[k:],axis=1)
+#                k      = k + 1
+        
         for z,ts in enumerate(self.energy_recoil):
-            if z<=self.uppt:
-                cse    = DCS(self.energy_nu,ts,1)
-                csmu   = DCS(self.energy_nu,ts,-1)
-                r[:,z] = np.trapz(self.spectrum_nu * (cse * survival_probablity + csmu * (1 - survival_probablity - sterile_probablity)), self.energy_nu,axis=1)
-            else:
-                cse    = DCS(self.energy_nu[k:],ts,1)
-                csmu   = DCS(self.energy_nu[k:],ts,-1)
-                r[:,z] = np.trapz(self.spectrum_nu[k:] * (cse * survival_probablity[:,k:] + csmu * (1 - survival_probablity[:,k:] - sterile_probablity[:,k:])), self.energy_nu[k:],axis=1)
-                k      = k + 1
+            cse    = DCS(self.energy_nu[z:],ts,1)
+            csmu   = DCS(self.energy_nu[z:],ts,-1)
+            r[:,z] = np.trapz(self.spectrum_nu[z:] * (cse * survival_probablity[:,z:] + csmu * (1 - survival_probablity[:,z:] - sterile_probablity[:,z:])), self.energy_nu[z:],axis=1)
+            
         
         self.flux_fraction_prediction = np.trapz((1./distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
         return (self.norm/self.borom_unoscilated_total) * self.flux_fraction_prediction
@@ -172,18 +179,31 @@ def ResSu(energy_obs, energy_recoil):
             r[j,i] = np.trapz(a,e_nu)
     return r
     
-def BoromUnoscilated(t, e, sp, uppt, t_obs, res):
+#def BoromUnoscilated(t, e, sp, uppt, t_obs, res):
+#    r         = np.zeros(t.shape)
+#    num_event = np.zeros(len(t_obs))
+#    k         = 0
+#    for z,ts in enumerate(t):
+#        if z<=uppt:
+#            cse  = DCS(e,ts,1)
+#            r[z] = np.trapz(sp*cse,e)
+#        else:
+#            cse  = DCS(e[k:],ts,1)
+#            r[z] = np.trapz(sp[k:]*cse,e[k:])
+#            k    = k + 1
+#            
+#    for i in range(len(t_obs)):
+#        num_event[i] = np.trapz(r*res[i],t)
+#    return num_event
+
+
+def BoromUnoscilated(t, e, sp, t_obs, res):
     r         = np.zeros(t.shape)
     num_event = np.zeros(len(t_obs))
-    k         = 0
+    
     for z,ts in enumerate(t):
-        if z<=uppt:
-            cse  = DCS(e,ts,1)
-            r[z] = np.trapz(sp*cse,e)
-        else:
-            cse  = DCS(e[k:],ts,1)
-            r[z] = np.trapz(sp[k:]*cse,e[k:])
-            k    = k + 1
+        cse  = DCS(e[z:],ts,1)
+        r[z] = np.trapz(sp[z:]*cse,e[z:])
             
     for i in range(len(t_obs)):
         num_event[i] = np.trapz(r*res[i],t)

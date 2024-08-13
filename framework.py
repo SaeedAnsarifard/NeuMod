@@ -180,6 +180,10 @@ def BoromUnoscilated(t, e, sp, g, uppt, data_su, res):
     for i in range(len(data_su)):
         num_event[i] = np.trapz(r*res[i],t)
     return num_event
+    
+    
+    
+    
 #
 #def SuperkPrediction(data,total_days,prediction,distance):
 #    day_array    = np.arange(0,total_days,1)

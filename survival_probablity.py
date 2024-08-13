@@ -1,7 +1,4 @@
 import numpy as np
-from framework import FrameWork
-from cobaya.run import run
-from scipy import interpolate
 
 global f_c , m_e, hbarc, phi, n_e
 

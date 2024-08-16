@@ -6,6 +6,8 @@ from skyfield.api import load, utc
 from survival_probablity import PseudoDirac
 
 # Global Constants
+FERMI_CONSTANT = 1.166  # e-11 MeV^-2
+HBAR_C = 1.97  # e-11 MeV cm
 HBARC_FERMI_CONSTANT = 1.97 * 1.166  #x 1e-11 MeV.cm x 1e-11 MeV^-2
 ELECTRON_MASS = 0.511  # MeV
 WEAK_MIXING_ANGLE = 0.2315
@@ -63,9 +65,13 @@ class FrameWork:
         self.energy_obs = np.array([[4.5, 19.5]])
         self.resp_func = self._response_function(self.energy_obs, self.energy_recoil)
         
+        # neutrino electron elastic scattering cross section
+        self.cs_electron = self._compute_cross_section(self.energy_nu,self.energy_recoil,1)
+        self.cs_muon = self._compute_cross_section(self.energy_nu,self.energy_recoil,-1)
+        
         # Unoscillated signal calculation
         self.borom_unoscilated_total = self._compute_unoscilated_signal(
-            self.energy_recoil, self.energy_nu, self.spectrum_nu, self.energy_obs, self.resp_func
+            self.energy_recoil, self.energy_nu, self.spectrum_nu, self.energy_obs, self.cs_electron, self.resp_func
         )
         
         # Default parameters
@@ -86,11 +92,10 @@ class FrameWork:
         self.param.update({'T12': t12, 'mum2': mum2, 'M12': m12})
         
         survival_prob, sterile_prob = PseudoDirac(self.param, self.distance, self.energy_nu)
+        
         r = np.zeros((len(self.distance),self.energy_recoil.shape[0]))
         for z,ts in enumerate(self.energy_recoil):
-            cse    = self._compute_cross_section(self.energy_nu[z:],ts,1)
-            csmu   = self._compute_cross_section(self.energy_nu[z:],ts,-1)
-            r[:,z] = np.trapz(self.spectrum_nu[z:] * (cse * survival_prob[:,z:] + csmu * (1 - survival_prob[:,z:] - sterile_prob[:,z:])), self.energy_nu[z:],axis=1)
+            r[:,z] = np.trapz(self.spectrum_nu[z:] * (self.cs_electron[z,z:] * survival_prob[:,z:] + self.cs_muon[z,z:] * (1 - survival_prob[:,z:] - sterile_prob[:,z:])), self.energy_nu[z:],axis=1)
             
         
         self.flux_fraction_prediction = np.trapz((1./self.distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
@@ -151,14 +156,13 @@ class FrameWork:
                 r[j,i] = np.trapz(a,e_nu)
         return r
     
-    def _compute_unoscilated_signal(self, energy_recoil, energy_nu, spectrum_nu, energy_obs, resp_func):
+    def _compute_unoscilated_signal(self, energy_recoil, energy_nu, spectrum_nu, energy_obs, cs_electron, resp_func):
         """Compute the unoscillated signal."""
         r         = np.zeros(energy_recoil.shape)
         num_event = np.zeros(len(energy_obs))
         
         for z,ts in enumerate(energy_recoil):
-            cse  = self._compute_cross_section(energy_nu[z:],ts,1)
-            r[z] = np.trapz(spectrum_nu[z:]*cse,energy_nu[z:])
+            r[z] = np.trapz(spectrum_nu[z:]*cs_electron[z,z:],energy_nu[z:])
                 
         for i in range(len(energy_obs)):
             num_event[i] = np.trapz(r*resp_func[i],energy_recoil)
@@ -183,7 +187,7 @@ class FrameWork:
         - Differential cross-section value in units of 10^-45 cm^2.
         """
         
-        x = np.sqrt(1 + 2 * ELECTRON_MASS / t_e)
+        x  = np.sqrt(1 + 2 * ELECTRON_MASS / t_e)[:,np.newaxis]*np.ones(len(e_nu))
         it = (1 / 6) * ((1 / 3) + (3 - x**2) * ((x / 2) * (np.log(x + 1) - np.log(x - 1)) - 1))
         
         if i == 1:
@@ -195,13 +199,12 @@ class FrameWork:
         
         gr = -RHO * kappa * WEAK_MIXING_ANGLE
         
-        z = t_e / e_nu
+        z = t_e[:,np.newaxis] / e_nu[np.newaxis,:]
         
         # Terms for the differential cross-section calculation
         a1 = gl**2 * (1 + ALPHA * 0)  # fm = 0
         a2 = gr**2 * (1 + ALPHA * 0) * (1 - z)**2  # fp = 0
-        a3 = gr * gl * (1 + ALPHA * 0) * (ELECTRON_MASS / e_nu) * z  # fmp = 0
+        a3 = gr * gl * (1 + ALPHA * 0) * (ELECTRON_MASS / e_nu[np.newaxis,:]) * z  # fmp = 0
         
         # Differential cross-section in units of 10^-45 cm^2
         return 2 * HBARC_FERMI_CONSTANT**2 * (ELECTRON_MASS / np.pi) * (a1 + a2 - a3) * 10
-

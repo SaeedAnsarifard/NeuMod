@@ -6,7 +6,7 @@ from skyfield.api import load, utc
 from survival_probablity import PseudoDirac
 
 # Global Constants
-HBARC_FERMI_CONSTANT = 1.97 * 1.166  #1e-11 MeV.cm * 1e-11 MeV^-2
+HBARC_FERMI_CONSTANT = 1.97 * 1.166  #x 1e-11 MeV.cm x 1e-11 MeV^-2
 ELECTRON_MASS = 0.511  # MeV
 WEAK_MIXING_ANGLE = 0.2315
 RHO = 1.0126
@@ -16,7 +16,7 @@ time_scale = load.timescale()  # Create a timescale object
 
 class FrameWork:
     """
-    Computes B8 prediction in unit of [10^-6 cm^-2 s^-1] at each day from initial to final date,
+    Computes B8 prediction in unit of [10^6 cm^-2 s^-1] at each day from initial to final date,
     according to the Super-Kamiokande experiment response function.
     
     Parameters:
@@ -53,10 +53,11 @@ class FrameWork:
         
         if do_binning:
             self.data = self._bin_data(self.data)
+        self.distance = np.sqrt(self.data[:, 0])
         
         # Geometric characteristic: Sun-Earth distance resolution (1 day)
         self.resolution = 1
-        self.distance, self.day = self._sun_earth_distance(self.firstday, self.total_days, self.resolution)
+        self.distance_high_resolution, self.day_high_resolution = self._sun_earth_distance(self.firstday, self.total_days, self.resolution)
         
         # Super-Kamiokande detector response function
         self.energy_obs = np.array([[4.5, 19.5]])
@@ -84,16 +85,15 @@ class FrameWork:
         
         self.param.update({'T12': t12, 'mum2': mum2, 'M12': m12})
         
-        distance = np.sqrt(self.data[:, 0])
-        survival_prob, sterile_prob = PseudoDirac(self.param, distance, self.energy_nu)
-        r = np.zeros((len(distance),self.energy_recoil.shape[0]))
+        survival_prob, sterile_prob = PseudoDirac(self.param, self.distance, self.energy_nu)
+        r = np.zeros((len(self.distance),self.energy_recoil.shape[0]))
         for z,ts in enumerate(self.energy_recoil):
             cse    = self._compute_cross_section(self.energy_nu[z:],ts,1)
             csmu   = self._compute_cross_section(self.energy_nu[z:],ts,-1)
             r[:,z] = np.trapz(self.spectrum_nu[z:] * (cse * survival_prob[:,z:] + csmu * (1 - survival_prob[:,z:] - sterile_prob[:,z:])), self.energy_nu[z:],axis=1)
             
         
-        self.flux_fraction_prediction = np.trapz((1./distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
+        self.flux_fraction_prediction = np.trapz((1./self.distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
         return (self.norm/self.borom_unoscilated_total) * self.flux_fraction_prediction
     
     def _parse_date(self, date_str):
@@ -124,8 +124,8 @@ class FrameWork:
         planets     = load('de421.bsp')
         sun,earth   = planets['sun'],planets['earth']
         t_array     = np.arange(0,total_days,resolution)
-        dtheory_sun = np.zeros(t_array.shape[0])
-        day_sun     = np.zeros(t_array.shape[0])
+        dtheory_sun = np.zeros(len(t_array))
+        day_sun     = np.zeros(len(t_array))
      
         for i,dt in enumerate(t_array):
             tstep = start_date + dt
@@ -136,8 +136,8 @@ class FrameWork:
             
             day_sun[i]         = np.mod(dt,365.25)/365.25   # :)
 
-        day_sun = day_sun - day_sun[dtheory_sun==np.min(dtheory_sun)]
-        day_sun[day_sun<0] = day_sun[day_sun<0] + 1
+        day_sun -= day_sun[dtheory_sun==np.min(dtheory_sun)]
+        day_sun[day_sun<0] += 1
         return dtheory_sun, day_sun
     
     def _response_function(self, energy_obs, energy_recoil):
@@ -172,7 +172,7 @@ class FrameWork:
         
         https://pdg.lbl.gov/2019/reviews/rpp2019-rev-standard-model.pdf
         
-        We do not consider the radiative corrections.
+        We do not consider radiative corrections.
         
         Parameters:
         - e_nu: Neutrino energy (MeV).

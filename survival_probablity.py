@@ -1,55 +1,59 @@
 import numpy as np
 
-global f_c , m_e, hbarc, phi, n_e
+# Global constants
+FERMI_CONSTANT = 1.166  # e-11 MeV^-2
+ELECTRON_MASS = 0.511  # MeV
+HBAR_C = 1.97  # e-11 MeV cm
 
-""" Fermi constant :  1.166 \times 10^{-11}/Mev^2 """
-f_c    = 1.166
+# Load data
+phi = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[6, :]
+n_e = 6 * 10**np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[2, :]   # 1e23 cm^-3
 
-""" Electron mass : 0.511 Mev """
-m_e    = 0.511
-
-""" h_{bar}c : 1.97 10^{-11} Mev.cm """
-hbarc  = 1.97
-
-""" Neutrino production point weight function : http://www.sns.ias.edu/~jnb/"""
-load_phi = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack = True)
-phi      = load_phi[6,:]
-
-""" Electron number density inside sun 10^{23}/cm^{3}"""
-n_e  = 6*10**load_phi[2,:]
-
-def PseudoDirac(param,ls,enu):
-    #ls_au = np.linspace(0.983,1.017,75)
-    ls   = 1.496e11 * ls
-    #enu = np.logspace(-1,1.3,100)
-    pel = np.zeros((ls.shape[0],enu.shape[0]))
-    psl = np.zeros((ls.shape[0],enu.shape[0]))
+def PseudoDirac(param, ls, enu):
+    """
+    Calculate the survival probabilities for pseudo-Dirac neutrinos.
     
-    util= np.ones((n_e.shape[0],enu.shape[0]))
-    ne  = np.reshape(n_e ,(n_e.shape[0],1))*util
-    e   = np.reshape(enu ,(1,enu.shape[0]))*util
+    Parameters:
+    - param: Dictionary containing the physical parameters ('M12', 'T12', 'T13', 'mum1', 'mum2', 'mum3').
+    - ls: Array of solar distances in AU.
+    - enu: Array of neutrino energies in MeV.
+    
+    Returns:
+    - pel: Electron neutrino survival probabilities.
+    - psl: Sterile neutrino survival probabilities.
+    """
+    ls_meters = 1.496e11 * ls  # Convert AU to meters
+    pel = np.zeros((len(ls), len(enu)))
+    psl = np.zeros((len(ls), len(enu)))
 
-    ve  = 2 * np.sqrt(2) * f_c * ne * hbarc**3 * 1e-9 * e
-    den = np.sqrt((param['M12'] * np.cos(2*(np.pi/180) * param['T12'])- ve)**2 + (param['M12'] * np.sin(2*(np.pi/180) * param['T12']))**2)         
-    nom = param['M12'] * np.cos(2*(np.pi/180) * param['T12']) - ve
-    tm  = 0.5*np.arccos(nom/den)
+    util = np.ones((len(n_e), len(enu)))
+    ne = n_e[:, np.newaxis] * util
+    e = enu[np.newaxis, :] * util
 
-    sin = np.sin((np.pi/180) * param['T12'])**2 * np.cos((np.pi/180) * param['T13'])**4
-    cos = np.cos((np.pi/180) * param['T12'])**2 * np.cos((np.pi/180) * param['T13'])**4
+    ve = 2 * np.sqrt(2) * FERMI_CONSTANT * ne * HBAR_C**3 * 1e-9 * e
+    cos_2theta12 = np.cos(np.radians(param['T12']) * 2)
+    sin_2theta12 = np.sin(np.radians(param['T12']) * 2)
+    cos_2theta13 = np.cos(np.radians(param['T13']))**4
 
-    for j,l in enumerate(ls):
-        ae1 = cos * np.cos(tm)**2  * np.cos(10*param['mum1']*l/(hbarc*2*e))**2
-        ae2 = sin * np.sin(tm)**2  * np.cos(10*param['mum2']*l/(hbarc*2*e))**2
-        ae3 = np.sin((np.pi/180)*param['T13'])**4 * np.cos(10*param['mum3']*l/(hbarc*2*e))**2
+    den = np.sqrt((param['M12'] * cos_2theta12 - ve)**2 + (param['M12'] * sin_2theta12)**2)
+    nom = param['M12'] * cos_2theta12 - ve
+    tm = 0.5 * np.arccos(nom / den)
 
-        pee = ae1 + ae2 + ae3
-        pel[j]  = np.sum(np.reshape(phi,(n_e.shape[0],1))*pee,axis=0)
+    sin_theta12_2 = np.sin(np.radians(param['T12']))**2
+    cos_theta12_2 = np.cos(np.radians(param['T12']))**2
+    sin_theta13_4 = np.sin(np.radians(param['T13']))**4
 
-        as1 = np.cos((np.pi/180) * param['T13'])**2 * np.cos(tm)**2  * np.sin(10*param['mum1']*l/(hbarc*2*e))**2
-        as2 = np.cos((np.pi/180) * param['T13'])**2 * np.sin(tm)**2  * np.sin(10*param['mum2']*l/(hbarc*2*e))**2
-        as3 = np.sin((np.pi/180) * param['T13'])**2 * np.sin(10*param['mum3']*l/(hbarc*2*e))**2
+    for j, l in enumerate(ls_meters):
+        ae1 = cos_theta12_2 * cos_2theta13 * np.cos(tm)**2 * np.cos(10 * param['mum1'] * l / (HBAR_C * 2 * e))**2
+        ae2 = sin_theta12_2 * cos_2theta13 * np.sin(tm)**2 * np.cos(10 * param['mum2'] * l / (HBAR_C * 2 * e))**2
+        ae3 = sin_theta13_4 * np.cos(10 * param['mum3'] * l / (HBAR_C * 2 * e))**2
 
-        pes = as1 + as2 + as3
-        psl[j]  = np.sum(np.reshape(phi,(n_e.shape[0],1))*pes,axis=0)
+        pel[j] = np.sum(phi[:, np.newaxis] * (ae1 + ae2 + ae3), axis=0)
+
+        as1 = cos_2theta13 * np.cos(tm)**2 * np.sin(10 * param['mum1'] * l / (HBAR_C * 2 * e))**2
+        as2 = cos_2theta13 * np.sin(tm)**2 * np.sin(10 * param['mum2'] * l / (HBAR_C * 2 * e))**2
+        as3 = sin_theta13_4 * np.sin(10 * param['mum3'] * l / (HBAR_C * 2 * e))**2
+
+        psl[j] = np.sum(phi[:, np.newaxis] * (as1 + as2 + as3), axis=0)
 
     return pel, psl

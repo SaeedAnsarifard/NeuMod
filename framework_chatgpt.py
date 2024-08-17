@@ -34,6 +34,8 @@ class FrameWork:
         
         # Neutrino flux normalization from SNO
         self.norm = 5.25  # x 10^6
+        self.target_number = 3.3 # 10^32 per kilo ton
+        
         
         # Load neutrino energy spectrum (B8 spectrum)
         spectrumB8 = np.loadtxt('./Spectrum/B8_spectrum.txt')
@@ -75,8 +77,9 @@ class FrameWork:
         )
         
         # Default parameters
-        self.param = {'T12': 34, 'T13': 8.57, 'mum1': 0., 'mum2': 0, 'mum3': 0., 'M12': 7.54e-5}
-    
+        #self.param = {'T12': 34, 'T13': 8.57, 'mum1': 0., 'mum2': 0, 'mum3': 0., 'M12': 7.54e-5}
+        self.param = {'SinT12': 0.319, 'T13': 8.57, 'mum1': 0., 'mum2': 0, 'mum3': 0., 'M12': 7.54e-5}
+                
     def __getitem__(self, param_update):
         """
         Updates parameters and computes survival probabilities.
@@ -89,7 +92,7 @@ class FrameWork:
         """
         t12, mum2, m12 = param_update
         
-        self.param.update({'T12': t12, 'mum2': mum2, 'M12': m12})
+        self.param.update({'SinT12': t12, 'mum2': mum2, 'M12': m12})
         
         survival_prob, sterile_prob = PseudoDirac(self.param, self.distance, self.energy_nu)
         

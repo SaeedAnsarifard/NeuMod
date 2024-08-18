@@ -23,25 +23,28 @@ class FrameWork:
     
     Parameters:
     - do_binning: Whether to bin the data (default is True).
+    - masked_val: Mask neutrino energy less than masked_val (default is 2 Mev).
     - first_day: Start date in the format 'year,month,day' (default is '2008,9,15').
     - last_day: End date in the format 'year,month,day' (default is '2018,5,30').
     """
 
-    def __init__(self, do_binning=True, first_day='2008,9,15', last_day='2018,5,30'):
+    def __init__(self, do_binning=True, masked_val=2, first_day='2008,9,15', last_day='2018,5,30'):
         self.firstday = self._parse_date(first_day)
         self.lastday = self._parse_date(last_day)
         self.total_days = int(self.lastday - self.firstday)
         
         # Neutrino flux normalization from SNO
-        self.norm = 5.25  # x 10^6
-        self.target_number = 3.3 # 10^32 per kilo ton
+        self.norm = 5.25  # x 10^6 cm^-2 s^-1
+        self.target_number = 3.3 # x 10^32 per kilo ton
         
         
         # Load neutrino energy spectrum (B8 spectrum)
         spectrumB8 = np.loadtxt('./Spectrum/B8_spectrum.txt')
-        mask = spectrumB8[:, 0] >= 2  # Only consider energies >= 2 MeV
+        
+        mask = spectrumB8[:, 0] >= masked_val  # Only consider energies >= 2 MeV
         self.spectrum_nu = spectrumB8[mask, 1]
         self.energy_nu = spectrumB8[mask, 0]
+
         
         # Calculate recoil energy (in MeV)
         self.energy_recoil = self.energy_nu / (1 + ELECTRON_MASS / (2 * self.energy_nu))
@@ -154,18 +157,22 @@ class FrameWork:
         for j in range (len(energy_obs)):
             e_nu = np.linspace(energy_obs[j,0],energy_obs[j,1])
             for i,t in enumerate(energy_recoil):
-                sig  = (-0.05525+0.3162*np.sqrt(t)+0.04572*t)
+                sig  = -0.05525 + 0.3162 * np.sqrt( t + ELECTRON_MASS ) + 0.04572 * ( t + ELECTRON_MASS )
                 a    = (1/(np.sqrt(2*np.pi)*sig))*np.exp(-0.5*(t-e_nu)**2/sig**2)
                 r[j,i] = np.trapz(a,e_nu)
         return r
     
     def _compute_unoscilated_signal(self, energy_recoil, energy_nu, spectrum_nu, energy_obs, cs_electron, resp_func):
-        """Compute the unoscillated signal."""
+        from scipy import interpolate
+        """Compute the unoscillated signal. The is unit of 10^{-45} cm^2"""
         r         = np.zeros(energy_recoil.shape)
         num_event = np.zeros(len(energy_obs))
         
         for z,ts in enumerate(energy_recoil):
-            r[z] = np.trapz(spectrum_nu[z:]*cs_electron[z,z:],energy_nu[z:])
+            if (len(energy_nu) - len(energy_nu[z:]))/len(energy_nu) >= 0.8 :
+                r[z] = np.trapz(spectrum_nu*cs_electron[z,:],energy_nu) - np.trapz(spectrum_nu[:z]*cs_electron[z,:z],energy_nu[:z])
+            else:
+                r[z] = np.trapz(spectrum_nu[z:]*cs_electron[z,z:],energy_nu[z:])
                 
         for i in range(len(energy_obs)):
             num_event[i] = np.trapz(r*resp_func[i],energy_recoil)

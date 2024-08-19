@@ -43,13 +43,13 @@ def PseudoDirac(param, ls, enu):
     cos_theta12_2 = 1 - sin_theta12_2 #np.cos(np.radians(param['T12']))**2
     
     cos_2theta12 = 1 - 2 * sin_theta12_2
-    sin_2theta12_2 = 4 * sin_theta12_2 * cos_theta12_2
+    sin_2theta12 = 2 * np.sqrt(param['SinT12'] -  param['SinT12']**2)
     
-    sin_theta13_4 = np.sin(np.radians(param['T13']))**4
-    cos_theta13_4 = np.cos(np.radians(param['T13']))**4
+    sin_theta13 = np.sin(np.radians(param['T13']))
+    cos_theta13 = np.cos(np.radians(param['T13']))
     
     
-    den = np.sqrt((param['M12'] * cos_2theta12 - ve)**2 + (param['M12']**2 * sin_2theta12_2))
+    den = np.sqrt((param['M12'] * cos_2theta12 - ve)**2 + (param['M12'] * sin_2theta12)**2)
     nom = param['M12'] * cos_2theta12 - ve
     
     tm = 0.5 * np.arccos(nom / den)
@@ -66,15 +66,15 @@ def PseudoDirac(param, ls, enu):
     e_extend = enu[np.newaxis,:]
     e_extend = np.repeat(e_extend,len(ls),axis=0)
     
-    ae1 = cos_theta13_4 * cos_theta12_2 * cos_tm_distributed #* np.cos(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    ae2 = cos_theta13_4 * sin_theta12_2 * sin_tm_distributed * np.cos(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    ae3 = sin_theta13_4 #* np.cos(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    ae1 = cos_theta13**4 * cos_theta12_2 * cos_tm_distributed #* np.cos(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    ae2 = cos_theta13**4 * sin_theta12_2 * sin_tm_distributed * np.cos(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    ae3 = sin_theta13**4 #* np.cos(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
 
     pel = ae1 + ae2 + ae3
 
-    as1 = cos_theta13_4 * cos_tm_distributed #* np.sin(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    as2 = cos_theta13_4 * sin_tm_distributed * np.sin(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    as3 = sin_theta13_4 #* np.sin(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    as1 = cos_theta13**2 * cos_tm_distributed #* np.sin(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    as2 = cos_theta13**2 * sin_tm_distributed * np.sin(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    as3 = sin_theta13**2 #* np.sin(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
 
     psl = as1 + as2 + as3
 

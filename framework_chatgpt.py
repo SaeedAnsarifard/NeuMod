@@ -22,13 +22,16 @@ class FrameWork:
     according to the Super-Kamiokande experiment response function.
     
     Parameters:
+    - resolution_correction: considering the Super-Kamiokande response function. It should be True in case of spectrum analsys (default is False).
     - do_binning: Whether to bin the data (default is True).
     - masked_val: Mask neutrino energy less than masked_val (default is 2 Mev).
     - first_day: Start date in the format 'year,month,day' (default is '2008,9,15').
     - last_day: End date in the format 'year,month,day' (default is '2018,5,30').
     """
 
-    def __init__(self, do_binning=True, masked_val=2, first_day='2008,9,15', last_day='2018,5,30'):
+    def __init__(self, resolution_correction=False, do_binning=True, masked_val=2, first_day='2008,9,15', last_day='2018,5,30'):
+        self.resolution_correction = resolution_correction
+        
         self.firstday = self._parse_date(first_day)
         self.lastday = self._parse_date(last_day)
         self.total_days = int(self.lastday - self.firstday)
@@ -100,12 +103,18 @@ class FrameWork:
         survival_prob, sterile_prob = PseudoDirac(self.param, self.distance, self.energy_nu)
         
         r = np.zeros((len(self.distance),self.energy_recoil.shape[0]))
-        for z,ts in enumerate(self.energy_recoil):
-            r[:,z] = np.trapz(self.spectrum_nu[z:] * (self.cs_electron[z,z:] * survival_prob[:,z:] + self.cs_muon[z,z:] * (1 - survival_prob[:,z:] - sterile_prob[:,z:])), self.energy_nu[z:],axis=1)
-            
         
-        self.flux_fraction_prediction = np.trapz((1./self.distance**2)[:,np.newaxis] * r * self.resp_func,self.energy_recoil,axis=1)
-        return (self.norm/self.borom_unoscilated_total) * self.flux_fraction_prediction
+        for z,ts in enumerate(self.energy_recoil):
+            if (len(self.energy_nu) - len(self.energy_nu[z:]))/len(self.energy_nu) >= 0.8 :
+                r[:,z] = np.trapz(self.spectrum_nu * (self.cs_electron[z,:] * survival_prob + self.cs_muon[z,:] * (1 - survival_prob - sterile_prob)), self.energy_nu, axis=1) - np.trapz(self.spectrum_nu[:z] * (self.cs_electron[z,:z] * survival_prob[:,:z] + self.cs_muon[z,:z] * (1 - survival_prob[:,:z] - sterile_prob[:,:z])), self.energy_nu[:z], axis=1)
+            else:
+                r[:,z] = np.trapz(self.spectrum_nu[z:] * (self.cs_electron[z,z:] * survival_prob[:,z:] + self.cs_muon[z,z:] * (1 - survival_prob[:,z:] - sterile_prob[:,z:])), self.energy_nu[z:],axis=1)
+            
+        if self.resolution_correction:
+            self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r * self.resp_func,self.energy_recoil, axis=1)/self.distance**2
+        else:
+            self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r , self.energy_recoil, axis=1)/self.distance**2
+        return self.flux_fraction_prediction
     
     def _parse_date(self, date_str):
         """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""
@@ -168,14 +177,18 @@ class FrameWork:
         r         = np.zeros(energy_recoil.shape)
         num_event = np.zeros(len(energy_obs))
         
-        for z,ts in enumerate(energy_recoil):
+        for z, ts in enumerate(energy_recoil):
             if (len(energy_nu) - len(energy_nu[z:]))/len(energy_nu) >= 0.8 :
                 r[z] = np.trapz(spectrum_nu*cs_electron[z,:],energy_nu) - np.trapz(spectrum_nu[:z]*cs_electron[z,:z],energy_nu[:z])
             else:
-                r[z] = np.trapz(spectrum_nu[z:]*cs_electron[z,z:],energy_nu[z:])
+                r[z] = np.trapz(spectrum_nu[z:] * cs_electron[z,z:], energy_nu[z:])
                 
-        for i in range(len(energy_obs)):
-            num_event[i] = np.trapz(r*resp_func[i],energy_recoil)
+        if self.resolution_correction:
+            for i in range(len(energy_obs)):
+                num_event[i] = np.trapz( r * resp_func[i], energy_recoil)
+        else:
+            for i in range(len(energy_obs)):
+                num_event[i] = np.trapz( r , energy_recoil)
         return num_event
 
     def _compute_cross_section(self, e_nu, t_e, i=1):

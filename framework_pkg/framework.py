@@ -3,7 +3,7 @@ import numpy as np
 from datetime import datetime
 from skyfield.api import load, utc
 
-from survival_probablity import PseudoDirac
+from framework_pkg.survival_probablity import PseudoDirac
 
 # Global Constants
 FERMI_CONSTANT = 1.166  # e-11 MeV^-2

@@ -65,9 +65,9 @@ class FrameWork:
             self.data = self._bin_data(self.data)
         self.distance = np.sqrt(self.data[:, 0])
         
-        # Geometric characteristic: Sun-Earth distance resolution (1 day)
-        self.resolution = 1
-        self.distance_high_resolution, self.day_high_resolution = self._sun_earth_distance(self.firstday, self.total_days, self.resolution)
+        # Geometric characteristic: Sun-Earth distance time step (in day, 1 as a fair geuss)
+        self.time_step = 1
+        self.distance_high_resolution, self.day_high_resolution = self._sun_earth_distance(self.firstday, self.total_days, self.time_step)
         
         # Super-Kamiokande detector response function
         self.energy_obs = np.array([[4.5, 19.5]])
@@ -111,7 +111,7 @@ class FrameWork:
                 r[:,z] = np.trapz(self.spectrum_nu[z:] * (self.cs_electron[z,z:] * survival_prob[:,z:] + self.cs_muon[z,z:] * (1 - survival_prob[:,z:] - sterile_prob[:,z:])), self.energy_nu[z:],axis=1)
             
         if self.resolution_correction:
-            self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r * self.resp_func,self.energy_recoil, axis=1)/self.distance**2
+            self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r * self.resp_func, self.energy_recoil, axis=1)/self.distance**2
         else:
             self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r , self.energy_recoil, axis=1)/self.distance**2
         return self.flux_fraction_prediction
@@ -123,7 +123,7 @@ class FrameWork:
         return time_scale.utc(date)
     
     def _bin_data(self, data):
-        """Bins the data based on some criteria."""
+        """Bins the data based on unique distance in the data."""
         error = np.mean(data[:,4:6],axis=1)
         data_new = [[],[],[],[]]
         d_unique = np.unique(data[:,6])
@@ -135,7 +135,7 @@ class FrameWork:
             data_new[3].append(0.5*(d_unique[i]-d_unique[i+1]))
         return np.array(data_new).T
     
-    def _sun_earth_distance(self, start_date, total_days, resolution):
+    def _sun_earth_distance(self, start_date, total_days, time_step):
         """Calculate Sun-Earth distance over a period."""
         
         """Load the JPL ephemeris DE421 (covers 1900-2050).
@@ -143,7 +143,7 @@ class FrameWork:
     
         planets     = load('./JPL_ephemeris/de421.bsp')
         sun,earth   = planets['sun'],planets['earth']
-        t_array     = np.arange(0,total_days,resolution)
+        t_array     = np.arange(0, total_days, time_step)
         dtheory_sun = np.zeros(len(t_array))
         day_sun     = np.zeros(len(t_array))
      
@@ -161,7 +161,7 @@ class FrameWork:
         return dtheory_sun, day_sun
     
     def _response_function(self, energy_obs, energy_recoil):
-        """Compute the detector's response function."""
+        """Compute the detector's response function. It is used to peredict the Super-Kamiokande spectrum data """
         r   = np.zeros((len(energy_obs),len(energy_recoil)))
         for j in range (len(energy_obs)):
             e_nu = np.linspace(energy_obs[j,0],energy_obs[j,1])
@@ -173,13 +173,13 @@ class FrameWork:
     
     def _compute_unoscilated_signal(self, energy_recoil, energy_nu, spectrum_nu, energy_obs, cs_electron, resp_func):
         from scipy import interpolate
-        """Compute the unoscillated signal. The is unit of 10^{-45} cm^2"""
+        """Compute the unoscillated signal. The cross section is in unit of 10^{-45} cm^2"""
         r         = np.zeros(energy_recoil.shape)
         num_event = np.zeros(len(energy_obs))
         
         for z, ts in enumerate(energy_recoil):
             if (len(energy_nu) - len(energy_nu[z:]))/len(energy_nu) >= 0.8 :
-                r[z] = np.trapz(spectrum_nu*cs_electron[z,:],energy_nu) - np.trapz(spectrum_nu[:z]*cs_electron[z,:z],energy_nu[:z])
+                r[z] = np.trapz(spectrum_nu * cs_electron[z,:], energy_nu) - np.trapz(spectrum_nu[:z] * cs_electron[z,:z], energy_nu[:z])
             else:
                 r[z] = np.trapz(spectrum_nu[z:] * cs_electron[z,z:], energy_nu[z:])
                 

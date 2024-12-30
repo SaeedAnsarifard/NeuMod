@@ -15,7 +15,7 @@ def MSW(param, enu):
     Calculate the survival probabilities for MSW neutrinos.
     
     Parameters:
-    - param: Dictionary containing the physical parameters ('M12', 'SinT12', 'T13', 'mum1', 'mum2', 'mum3').
+    - param: Dictionary containing the physical parameters ('M12', 'SinT12', 'T13').
     - enu: Array of neutrino energies in MeV.
     
     Returns:

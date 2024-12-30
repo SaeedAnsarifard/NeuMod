@@ -141,7 +141,7 @@ class FrameWork:
         """Load the JPL ephemeris DE421 (covers 1900-2050).
         https://ui.adsabs.harvard.edu/abs/2019ascl.soft07024R """
     
-        planets     = load('de421.bsp')
+        planets     = load('./JPL_ephemeris/de421.bsp')
         sun,earth   = planets['sun'],planets['earth']
         t_array     = np.arange(0,total_days,resolution)
         dtheory_sun = np.zeros(len(t_array))

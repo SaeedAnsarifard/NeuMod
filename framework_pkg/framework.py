@@ -38,7 +38,7 @@ class FrameWork:
         
         # Neutrino flux normalization from SNO
         self.norm = 5.25  # x 10^6 cm^-2 s^-1
-        self.target_number = 3.3 # x 10^32 per kilo ton
+        self.target_number = (10/18) * (1/1.67) * 6. * 6. * 24. #per day per kilo ton 10^35
         
         
         # Load neutrino energy spectrum (B8 spectrum)

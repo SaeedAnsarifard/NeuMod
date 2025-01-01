@@ -65,7 +65,7 @@ class FrameWork:
             self.data = self._bin_data(self.data)
         self.distance = np.sqrt(self.data[:, 0])
         
-        # Geometric characteristic: Sun-Earth distance time step (in day, 1 as a fair geuss)
+        # Geometric characteristic: Sun-Earth distance time step (in day, 1 is a fair choice)
         self.time_step = 1
         self.distance_high_resolution, self.day_high_resolution = self._sun_earth_distance(self.firstday, self.total_days, self.time_step)
         
@@ -83,8 +83,7 @@ class FrameWork:
         )
         
         # Default parameters
-        #self.param = {'T12': 34, 'T13': 8.57, 'mum1': 0., 'mum2': 0, 'mum3': 0., 'M12': 7.54e-5}
-        self.param = {'SinT12': 0.319, 'T13': 8.57, 'mum1': 0., 'mum2': 0, 'mum3': 0., 'M12': 7.54e-5}
+        self.param = {'SinT12': 0.319, 'T13': 8.57, 'M12': 7.54e-5}
                 
     def __getitem__(self, param_update):
         """

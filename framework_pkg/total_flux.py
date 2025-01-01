@@ -3,7 +3,7 @@ import numpy as np
 from framework_pkg.framework import FrameWork
 from framework_pkg.survival_probablity import MSW , PseudoDirac
 
-class SuperKSpectrum:
+class SuperKFlux:
     """
     Class for computing and comparing the Super-Kamiokande event spectrum.
     """
@@ -13,8 +13,8 @@ class SuperKSpectrum:
         masked_val = 0.1
         self.frame = FrameWork(resolution_correction, masked_val, first_day, last_day )
         
-        self.total_volume = 22.5  # Total detector volume in kilotons
-        self.SNO_norm = 1e-4 * self.frame.norm
+        #self.total_volume = 22.5  # Total detector volume in kilotons
+        self.SNO_norm = self.frame.norm
         self.distance = self.frame.distance_list
 
         # Load modulation data from file
@@ -83,6 +83,8 @@ class SuperKSpectrum:
             survival_probability, sterile_probability = PseudoDirac(self.frame.param, self.distance, self.frame.energy_nu)
             appearance = survival_probability
             disappearance = 1 - survival_probability - sterile_probability
+            appearance = survival_probability / self.distance[:,np.newaxis]**2
+            disappearance = (1 - survival_probability - sterile_probability)/self.distance[:,np.newaxis]**2
         else:
             raise ValueError(f"Unsupported survival probability method: {name}")
 
@@ -104,22 +106,15 @@ class SuperKSpectrum:
 
         # Map integrals to observed energy bins
         num_obs_bins = len(self.energy_obs)
-        integral_electron_recoil = np.zeros((appearance.shape[0],num_obs_bins))
-        integral_muon_recoil = np.zeros((appearance.shape[0],num_obs_bins))
+        integral_electron_recoil = np.zeros((appearance.shape[0], num_obs_bins))
+        integral_muon_recoil = np.zeros((appearance.shape[0], num_obs_bins))
 
         for i in range(num_obs_bins):
-            integral_electron_recoil[:,i] = np.trapz(
-                self.response_function[i] * integral_electron , self.frame.energy_recoil
-            )
-            integral_muon_recoil[:,i] = np.trapz(
-                self.response_function[i] * integral_muon, self.frame.energy_recoil
-            )
+            integral_electron_recoil[:,i] = np.trapz( integral_electron, self.frame.energy_recoil)
+            
+            integral_muon_recoil[:,i] = np.trapz( integral_muon, self.frame.energy_recoil)
+            
 
         # Compute spectrum events per day with oscillations
-        spectrum_events_per_day = (
-            self.total_volume
-            * self.SNO_norm
-            * self.frame.target_number
-            * (integral_electron_recoil + integral_muon_recoil)
-        )
-        return spectrum_events_per_day
+        oscilated_flux = ((integral_electron_recoil + integral_muon_recoil)/self.unoscillated_flux )
+        return self.SNO_norm * oscilated_flux

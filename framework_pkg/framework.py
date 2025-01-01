@@ -53,7 +53,7 @@ class FrameWork:
         self.energy_recoil = self.energy_nu / (1 + ELECTRON_MASS / (2 * self.energy_nu))
                 
         t0 = time_scale.utc(datetime(1970, 1, 1, 0, 0, 0, tzinfo=utc))
-        zeroday = self.firstday.tt - t0.tt
+        self.zeroday = self.firstday.tt - t0.tt
 
         # Geometric characteristic: Sun-Earth distance time step (in day, 1 is a fair choice)
         self.time_step = 1
@@ -63,11 +63,6 @@ class FrameWork:
         self.cs_electron = self._compute_cross_section(self.energy_nu,self.energy_recoil,1)
         self.cs_muon = self._compute_cross_section(self.energy_nu,self.energy_recoil,-1)
         
-        ##############################
-
-        ##############################
-
-
         # Default parameters
         self.param = {'SinT12': 0.319, 'T13': 8.57, 'M12': 7.54e-5}
                 

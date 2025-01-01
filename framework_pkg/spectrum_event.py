@@ -67,8 +67,8 @@ class SuperKSpectrum:
 
             self.frame.param.update(param_update)
             survival_probability, sterile_probability = PseudoDirac(self.frame.param, self.distance, self.frame.energy_nu)
-            appearance = survival_probability
-            disappearance = 1 - survival_probability - sterile_probability
+            appearance = survival_probability / self.distance[:,np.newaxis]**2
+            disappearance = (1 - survival_probability - sterile_probability)/self.distance[:,np.newaxis]**2
         else:
             raise ValueError(f"Unsupported survival probability method: {name}")
 

@@ -29,7 +29,7 @@ class FrameWork:
     - last_day: End date in the format 'year,month,day' (default is '2018,5,30').
     """
 
-    def __init__(self, resolution_correction=False, do_binning=True, masked_val=2.5, first_day='2008,9,15', last_day='2018,5,30'):
+    def __init__(self, resolution_correction=False, masked_val=2.5, first_day='2008,9,15', last_day='2018,5,30'):
         self.resolution_correction = resolution_correction
         
         self.firstday = self._parse_date(first_day)
@@ -51,69 +51,55 @@ class FrameWork:
         
         # Calculate recoil energy (in MeV)
         self.energy_recoil = self.energy_nu / (1 + ELECTRON_MASS / (2 * self.energy_nu))
-        
-        # Load Super-Kamiokande Data event
-        self.data = np.loadtxt('./Data/sksolartimevariation5804d.txt')
-        self.data[:, :3] /= (60. * 60. * 24.)  # Convert time columns to days
-        
+                
         t0 = time_scale.utc(datetime(1970, 1, 1, 0, 0, 0, tzinfo=utc))
         zeroday = self.firstday.tt - t0.tt
-        self.data = self.data[self.data[:, 0] - self.data[:, 1] >= zeroday]
-        self.data[:, 0] -= zeroday
-        
-        if do_binning:
-            self.data = self._bin_data(self.data)
-        self.distance = np.sqrt(self.data[:, 0])
-        
+
         # Geometric characteristic: Sun-Earth distance time step (in day, 1 is a fair choice)
         self.time_step = 1
-        self.distance_high_resolution, self.day_high_resolution = self._sun_earth_distance(self.firstday, self.total_days, self.time_step)
-        
-        # Super-Kamiokande detector response function
-        self.energy_obs = np.array([[4.5, 19.5]])
-        self.resp_func = self._response_function(self.energy_obs, self.energy_recoil)
+        self.distance_list, self.day_list = self._sun_earth_distance(self.firstday, self.total_days, self.time_step)
         
         # neutrino electron elastic scattering cross section
         self.cs_electron = self._compute_cross_section(self.energy_nu,self.energy_recoil,1)
         self.cs_muon = self._compute_cross_section(self.energy_nu,self.energy_recoil,-1)
         
-        # Unoscillated signal calculation
-        self.borom_unoscilated_total = self._compute_unoscilated_signal(
-            self.energy_recoil, self.energy_nu, self.spectrum_nu, self.energy_obs, self.cs_electron, self.resp_func
-        )
-        
+        ##############################
+
+        ##############################
+
+
         # Default parameters
         self.param = {'SinT12': 0.319, 'T13': 8.57, 'M12': 7.54e-5}
                 
-    def __getitem__(self, param_update):
-        """
-        Updates parameters and computes survival probabilities.
+    # def __getitem__(self, param_update):
+    #     """
+    #     Updates parameters and computes survival probabilities.
         
-        Parameters:
-        - param_update: Tuple containing updates for T12, mum2, and M12.
+    #     Parameters:
+    #     - param_update: Tuple containing updates for T12, mum2, and M12.
         
-        Returns:
-        - Computed results based on updated parameters.
-        """
-        t12, mum2, m12 = param_update
+    #     Returns:
+    #     - Computed results based on updated parameters.
+    #     """
+    #     t12, mum2, m12 = param_update
         
-        self.param.update({'SinT12': t12, 'mum2': mum2, 'M12': m12})
+    #     self.param.update({'SinT12': t12, 'mum2': mum2, 'M12': m12})
         
-        survival_prob, sterile_prob = PseudoDirac(self.param, self.distance, self.energy_nu)
+    #     survival_prob, sterile_prob = PseudoDirac(self.param, self.distance, self.energy_nu)
         
-        r = np.zeros((len(self.distance),self.energy_recoil.shape[0]))
+    #     r = np.zeros((len(self.distance),self.energy_recoil.shape[0]))
         
-        for z,ts in enumerate(self.energy_recoil):
-            if (len(self.energy_nu) - len(self.energy_nu[z:]))/len(self.energy_nu) >= 0.8 :
-                r[:,z] = np.trapz(self.spectrum_nu * (self.cs_electron[z,:] * survival_prob + self.cs_muon[z,:] * (1 - survival_prob - sterile_prob)), self.energy_nu, axis=1) - np.trapz(self.spectrum_nu[:z] * (self.cs_electron[z,:z] * survival_prob[:,:z] + self.cs_muon[z,:z] * (1 - survival_prob[:,:z] - sterile_prob[:,:z])), self.energy_nu[:z], axis=1)
-            else:
-                r[:,z] = np.trapz(self.spectrum_nu[z:] * (self.cs_electron[z,z:] * survival_prob[:,z:] + self.cs_muon[z,z:] * (1 - survival_prob[:,z:] - sterile_prob[:,z:])), self.energy_nu[z:],axis=1)
+    #     for z,ts in enumerate(self.energy_recoil):
+    #         if (len(self.energy_nu) - len(self.energy_nu[z:]))/len(self.energy_nu) >= 0.8 :
+    #             r[:,z] = np.trapz(self.spectrum_nu * (self.cs_electron[z,:] * survival_prob + self.cs_muon[z,:] * (1 - survival_prob - sterile_prob)), self.energy_nu, axis=1) - np.trapz(self.spectrum_nu[:z] * (self.cs_electron[z,:z] * survival_prob[:,:z] + self.cs_muon[z,:z] * (1 - survival_prob[:,:z] - sterile_prob[:,:z])), self.energy_nu[:z], axis=1)
+    #         else:
+    #             r[:,z] = np.trapz(self.spectrum_nu[z:] * (self.cs_electron[z,z:] * survival_prob[:,z:] + self.cs_muon[z,z:] * (1 - survival_prob[:,z:] - sterile_prob[:,z:])), self.energy_nu[z:],axis=1)
             
-        if self.resolution_correction:
-            self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r * self.resp_func, self.energy_recoil, axis=1)/self.distance**2
-        else:
-            self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r , self.energy_recoil, axis=1)/self.distance**2
-        return self.flux_fraction_prediction
+    #     if self.resolution_correction:
+    #         self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r * self.resp_func, self.energy_recoil, axis=1)/self.distance**2
+    #     else:
+    #         self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r , self.energy_recoil, axis=1)/self.distance**2
+    #     return self.flux_fraction_prediction
     
     def _parse_date(self, date_str):
         """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""

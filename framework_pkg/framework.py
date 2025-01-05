@@ -40,18 +40,16 @@ class FrameWork:
         self.norm = 5.25  # x 10^6 cm^-2 s^-1
         self.target_number = (10/18) * (1/1.67) * 6. * 6. * 24. #per day per kilo ton 10^35
         
-        
         # Load neutrino energy spectrum (B8 spectrum)
         spectrumB8 = np.loadtxt('./Spectrum/B8_spectrum.txt')
         
-        mask = spectrumB8[:, 0] >= masked_val  # Only consider energies >= 2 MeV
-        self.spectrum_nu = spectrumB8[mask, 1]
-        self.energy_nu = spectrumB8[mask, 0]
-
-        
         # Calculate recoil energy (in MeV)
-        self.energy_recoil = self.energy_nu / (1 + ELECTRON_MASS / (2 * self.energy_nu))
-                
+        self.energy_recoil = spectrumB8[:, 0] / (1 + ELECTRON_MASS / (2 * spectrumB8[:, 0]))
+        mask = self.energy_recoil >= masked_val  # Only consider energies >= 2 MeV
+        self.energy_recoil = self.energy_recoil[mask]
+        self.spectrum_nu = spectrumB8[mask, 1]
+        self.energy_nu = spectrumB8[mask, 0] 
+
         t0 = time_scale.utc(datetime(1970, 1, 1, 0, 0, 0, tzinfo=utc))
         self.zeroday = self.firstday.tt - t0.tt
 
@@ -60,8 +58,8 @@ class FrameWork:
         self.distance_list, self.day_list = self._sun_earth_distance(self.firstday, self.total_days, self.time_step)
         
         # neutrino electron/moun elastic scattering cross section
-        self.cs_electron = self._compute_cross_section(self.energy_nu,self.energy_recoil,1)
-        self.cs_muon = self._compute_cross_section(self.energy_nu,self.energy_recoil,-1)
+        self.cs_electron = self._compute_cross_section(self.energy_nu, self.energy_recoil, 1)
+        self.cs_muon = self._compute_cross_section(self.energy_nu, self.energy_recoil, -1)
             
     def _parse_date(self, date_str):
         """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""

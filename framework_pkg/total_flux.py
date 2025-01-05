@@ -11,7 +11,7 @@ class SuperKFlux:
         # Initialize the framework with necessary parameters
         resolution_correction = False
         masked_val = 0.1
-        self.frame = FrameWork(resolution_correction, masked_val, first_day, last_day )
+        self.frame = FrameWork(resolution_correction, masked_val, first_day, last_day)
         
         #self.total_volume = 22.5  # Total detector volume in kilotons
         self.SNO_norm = self.frame.norm
@@ -20,7 +20,6 @@ class SuperKFlux:
         # Load modulation data from file
         self.modulation_data = np.loadtxt('./Data/sksolartimevariation5804d.txt')
         self.modulation_data[:, :3] /= (60. * 60. * 24.)  # Convert time columns to days
-
 
         #self.spectrum_data = np.loadtxt('./Data/B8_SuperK_Spectrum_2023.txt')
         #self.energy_obs = self.spectrum_data[:, :2]
@@ -43,15 +42,9 @@ class SuperKFlux:
             self.frame.cs_electron,
             self.response_function,
         )
-
-
-        # Compute unoscillated events per day
-        # self.unoscillated_event = (
-        #     self.total_volume
-        #     * self.SNO_norm
-        #     * self.frame.target_number
-        #     * self.unoscillated_spectrum
-        # )
+        
+        # Default parameters
+        self.param = {'SinT12': 0.319, 'T13': 8.57, 'M12': 7.54e-5}
 
     def __getitem__(self, param_update, name="MSW"):
         """
@@ -67,8 +60,8 @@ class SuperKFlux:
 
         # Compute survival probability using the specified method
         if name == "MSW":
-            self.frame.param.update(param_update)
-            survival_probability = MSW(self.frame.param, self.frame.energy_nu)
+            self.param.update(param_update)
+            survival_probability = MSW(self.param, self.frame.energy_nu)
             appearance = (survival_probability)[np.newaxis]
             disappearance = (1 - survival_probability)[np.newaxis]
         elif name == "PseudoDirac":
@@ -79,8 +72,8 @@ class SuperKFlux:
             if "mum3" not in param_update:
                 param_update["mum3"] = 0  # Set a default value for param3
 
-            self.frame.param.update(param_update)
-            survival_probability, sterile_probability = PseudoDirac(self.frame.param, self.distance, self.frame.energy_nu)
+            self.param.update(param_update)
+            survival_probability, sterile_probability = PseudoDirac(self.param, self.distance, self.frame.energy_nu)
             appearance = survival_probability
             disappearance = 1 - survival_probability - sterile_probability
             appearance = survival_probability / self.distance[:,np.newaxis]**2
@@ -91,7 +84,7 @@ class SuperKFlux:
         # Initialize integral arrays
         num_recoil_bins = len(self.frame.energy_recoil)
         integral_electron = np.zeros((appearance.shape[0], num_recoil_bins))
-        integral_muon = np.zeros((appearance.shape[0],num_recoil_bins))
+        integral_muon = np.zeros((appearance.shape[0], num_recoil_bins))
 
         # Compute the electron and muon integrals
         for k in range(num_recoil_bins):
@@ -115,6 +108,6 @@ class SuperKFlux:
             integral_muon_recoil[:,i] = np.trapz( integral_muon, self.frame.energy_recoil)
             
 
-        # Compute spectrum events per day with oscillations
+        # Compute total events
         oscilated_flux = ((integral_electron_recoil + integral_muon_recoil)/self.unoscillated_flux )
         return self.SNO_norm * oscilated_flux

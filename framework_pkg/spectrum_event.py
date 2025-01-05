@@ -11,7 +11,7 @@ class SuperKSpectrum:
         # Initialize the framework with necessary parameters
         resolution_correction = True
         masked_val = 2.5
-        self.frame = FrameWork(resolution_correction, masked_val, first_day, last_day )
+        self.frame = FrameWork(resolution_correction, masked_val, first_day, last_day)
         self.total_volume = 22.5  # Total detector volume in kilotons
         self.SNO_norm = 1e-4 * self.frame.norm
         self.distance = self.frame.distance_list
@@ -39,6 +39,9 @@ class SuperKSpectrum:
             * self.unoscillated_spectrum
         )
 
+        # Default parameters
+        self.param = {'SinT12': 0.319, 'T13': 8.57, 'M12': 7.54e-5}
+
     def __getitem__(self, param_update, name="MSW"):
         """
         Compare the oscilated and unoscillated spectra given updated parameters.
@@ -53,8 +56,8 @@ class SuperKSpectrum:
 
         # Compute survival probability using the specified method
         if name == "MSW":
-            self.frame.param.update(param_update)
-            survival_probability = MSW(self.frame.param, self.frame.energy_nu)
+            self.param.update(param_update)
+            survival_probability = MSW(self.param, self.frame.energy_nu)
             appearance = (survival_probability)[np.newaxis]
             disappearance = (1 - survival_probability)[np.newaxis]
         elif name == "PseudoDirac":
@@ -65,8 +68,8 @@ class SuperKSpectrum:
             if "mum3" not in param_update:
                 param_update["mum3"] = 0  # Set a default value for param3
 
-            self.frame.param.update(param_update)
-            survival_probability, sterile_probability = PseudoDirac(self.frame.param, self.distance, self.frame.energy_nu)
+            self.param.update(param_update)
+            survival_probability, sterile_probability = PseudoDirac(self.param, self.distance, self.frame.energy_nu)
             appearance = survival_probability / self.distance[:,np.newaxis]**2
             disappearance = (1 - survival_probability - sterile_probability)/self.distance[:,np.newaxis]**2
         else:

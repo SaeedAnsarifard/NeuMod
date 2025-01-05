@@ -3,7 +3,7 @@ import numpy as np
 from datetime import datetime
 from skyfield.api import load, utc
 
-from framework_pkg.survival_probablity import PseudoDirac
+#from framework_pkg.survival_probablity import PseudoDirac
 
 # Global Constants
 FERMI_CONSTANT = 1.166  # e-11 MeV^-2
@@ -59,43 +59,10 @@ class FrameWork:
         self.time_step = 1
         self.distance_list, self.day_list = self._sun_earth_distance(self.firstday, self.total_days, self.time_step)
         
-        # neutrino electron elastic scattering cross section
+        # neutrino electron/moun elastic scattering cross section
         self.cs_electron = self._compute_cross_section(self.energy_nu,self.energy_recoil,1)
         self.cs_muon = self._compute_cross_section(self.energy_nu,self.energy_recoil,-1)
-        
-        # Default parameters
-        self.param = {'SinT12': 0.319, 'T13': 8.57, 'M12': 7.54e-5}
-                
-    # def __getitem__(self, param_update):
-    #     """
-    #     Updates parameters and computes survival probabilities.
-        
-    #     Parameters:
-    #     - param_update: Tuple containing updates for T12, mum2, and M12.
-        
-    #     Returns:
-    #     - Computed results based on updated parameters.
-    #     """
-    #     t12, mum2, m12 = param_update
-        
-    #     self.param.update({'SinT12': t12, 'mum2': mum2, 'M12': m12})
-        
-    #     survival_prob, sterile_prob = PseudoDirac(self.param, self.distance, self.energy_nu)
-        
-    #     r = np.zeros((len(self.distance),self.energy_recoil.shape[0]))
-        
-    #     for z,ts in enumerate(self.energy_recoil):
-    #         if (len(self.energy_nu) - len(self.energy_nu[z:]))/len(self.energy_nu) >= 0.8 :
-    #             r[:,z] = np.trapz(self.spectrum_nu * (self.cs_electron[z,:] * survival_prob + self.cs_muon[z,:] * (1 - survival_prob - sterile_prob)), self.energy_nu, axis=1) - np.trapz(self.spectrum_nu[:z] * (self.cs_electron[z,:z] * survival_prob[:,:z] + self.cs_muon[z,:z] * (1 - survival_prob[:,:z] - sterile_prob[:,:z])), self.energy_nu[:z], axis=1)
-    #         else:
-    #             r[:,z] = np.trapz(self.spectrum_nu[z:] * (self.cs_electron[z,z:] * survival_prob[:,z:] + self.cs_muon[z,z:] * (1 - survival_prob[:,z:] - sterile_prob[:,z:])), self.energy_nu[z:],axis=1)
             
-    #     if self.resolution_correction:
-    #         self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r * self.resp_func, self.energy_recoil, axis=1)/self.distance**2
-    #     else:
-    #         self.flux_fraction_prediction = (self.norm/self.borom_unoscilated_total) * np.trapz( r , self.energy_recoil, axis=1)/self.distance**2
-    #     return self.flux_fraction_prediction
-    
     def _parse_date(self, date_str):
         """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""
         year, month, day = map(int, date_str.split(','))

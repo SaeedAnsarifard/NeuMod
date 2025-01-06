@@ -9,7 +9,7 @@ class SuperKFlux:
     """
     def __init__(self, threshold=3.5,  first_day='2008,9,15', last_day='2018,5,30'):
         # Initialize the framework with necessary parameters
-        resolution_correction = True
+        resolution_correction = False
         self.frame = FrameWork(resolution_correction, first_day, last_day)
         
         # Total detector volume in kilotons

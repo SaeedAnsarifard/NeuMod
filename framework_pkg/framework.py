@@ -29,7 +29,7 @@ class FrameWork:
     - last_day: End date in the format 'year,month,day' (default is '2018,5,30').
     """
 
-    def __init__(self, resolution_correction=False, masked_val=2.5, first_day='2008,9,15', last_day='2018,5,30'):
+    def __init__(self, resolution_correction=False, first_day='2008,9,15', last_day='2018,5,30'):
         self.resolution_correction = resolution_correction
         
         self.firstday = self._parse_date(first_day)
@@ -42,13 +42,11 @@ class FrameWork:
         
         # Load neutrino energy spectrum (B8 spectrum)
         spectrumB8 = np.loadtxt('./Spectrum/B8_spectrum.txt')
-        
+        self.spectrum_nu = spectrumB8[:, 1]
+        self.energy_nu = spectrumB8[:, 0] 
+
         # Calculate recoil energy (in MeV)
         self.energy_recoil = spectrumB8[:, 0] / (1 + ELECTRON_MASS / (2 * spectrumB8[:, 0]))
-        mask = self.energy_recoil >= masked_val  # Only consider energies >= 2 MeV
-        self.energy_recoil = self.energy_recoil[mask]
-        self.spectrum_nu = spectrumB8[mask, 1]
-        self.energy_nu = spectrumB8[mask, 0] 
 
         t0 = time_scale.utc(datetime(1970, 1, 1, 0, 0, 0, tzinfo=utc))
         self.zeroday = self.firstday.tt - t0.tt

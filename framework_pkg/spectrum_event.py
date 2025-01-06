@@ -10,8 +10,7 @@ class SuperKSpectrum:
     def __init__(self, first_day='2008,9,15', last_day='2018,5,30'):
         # Initialize the framework with necessary parameters
         resolution_correction = True
-        masked_val = 2.5
-        self.frame = FrameWork(resolution_correction, masked_val, first_day, last_day)
+        self.frame = FrameWork(resolution_correction, first_day, last_day)
         self.total_volume = 22.5  # Total detector volume in kilotons
         self.SNO_norm = 1e-4 * self.frame.norm
         self.distance = self.frame.distance_list

@@ -7,11 +7,10 @@ class SuperKFlux:
     """
     Class for computing and comparing the Super-Kamiokande event spectrum.
     """
-    def __init__(self, masked_val=3.5,  first_day='2008,9,15', last_day='2018,5,30'):
+    def __init__(self, threshold=3.5,  first_day='2008,9,15', last_day='2018,5,30'):
         # Initialize the framework with necessary parameters
-        resolution_correction = False
-        self.masked_val = masked_val
-        self.frame = FrameWork(resolution_correction, self.masked_val, first_day, last_day)
+        resolution_correction = True
+        self.frame = FrameWork(resolution_correction, first_day, last_day)
         
         # Total detector volume in kilotons
         self.SNO_norm = self.frame.norm
@@ -26,7 +25,7 @@ class SuperKFlux:
         self.modulation_data[:, 0] -= zeroday
         
         # Compute response function and unoscillated flux
-        self.energy_obs = np.array([[self.masked_val, 19.5]])
+        self.energy_obs = np.array([[threshold, 19.5]])
         self.response_function = self.frame._response_function(self.energy_obs, self.frame.energy_recoil)
         self.unoscillated_flux = self.frame._compute_unoscilated_signal(
             self.frame.energy_recoil,
@@ -42,7 +41,7 @@ class SuperKFlux:
 
     def __getitem__(self, param_update, name="MSW"):
         """
-        Compare the oscilated and unoscillated spectra given updated parameters.
+        Compare the oscilated and unoscillated total events given updated parameters.
 
         Parameters:
             param_update (dict): Dictionary containing updated parameter values.
@@ -89,8 +88,22 @@ class SuperKFlux:
                 self.frame.energy_nu[k:],
             )
 
-        integral_electron_recoil = np.trapz( integral_electron, self.frame.energy_recoil)
-        integral_muon_recoil = np.trapz( integral_muon, self.frame.energy_recoil)
+
+        # Map integrals to observed energy bins
+        num_obs_bins = len(self.energy_obs)
+        integral_electron_recoil = np.zeros((num_obs_bins))
+        integral_muon_recoil = np.zeros((num_obs_bins))
+
+        for i in range(num_obs_bins):
+            integral_electron_recoil[i] = np.trapz(
+                self.response_function[i] * integral_electron , self.frame.energy_recoil
+            )
+            integral_muon_recoil[i] = np.trapz(
+                self.response_function[i] * integral_muon, self.frame.energy_recoil
+            )
+
+        # integral_electron_recoil = np.trapz( integral_electron * , self.frame.energy_recoil)
+        # integral_muon_recoil = np.trapz( integral_muon, self.frame.energy_recoil)
             
         # Compute total events
         oscilated_flux = ((integral_electron_recoil + integral_muon_recoil)/self.unoscillated_flux )

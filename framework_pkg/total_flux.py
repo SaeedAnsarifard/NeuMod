@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 from framework_pkg.framework import FrameWork
 from framework_pkg.survival_probablity import MSW , PseudoDirac
@@ -7,10 +8,10 @@ class SuperKFlux:
     """
     Class for computing and comparing the Super-Kamiokande event spectrum.
     """
-    def __init__(self, threshold=3.5,  first_day='2008,9,15', last_day='2018,5,30'):
+    def __init__(self, threshold=3.5,  first_day='1996,5,30', last_day='2018,5,30'):
         # Initialize the framework with necessary parameters
-        resolution_correction = False
-        self.frame = FrameWork(resolution_correction, first_day, last_day)
+        self.resolution_correction = True
+        self.frame = FrameWork(self.resolution_correction, first_day, last_day)
         
         # Total detector volume in kilotons
         self.SNO_norm = self.frame.norm
@@ -20,20 +21,24 @@ class SuperKFlux:
         self.modulation_data = np.loadtxt('./Data/sksolartimevariation5804d.txt')
         self.modulation_data[:, :3] /= (60. * 60. * 24.)  # Convert time columns to days
 
+        superk_efficiency = np.array(pd.read_csv('./Data/superk_efficiency.csv'))
+        superk_efficiency[0,0] = 3.5
+        self.efficiency =  np.interp(self.frame.energy_recoil,
+                                     superk_efficiency[superk_efficiency[:,0]>= threshold,0],
+                                     superk_efficiency[superk_efficiency[:,0]>= threshold,1],
+                                     left=0, right=superk_efficiency[-1,1])[np.newaxis,:]
+
         zeroday = self.frame.zeroday
         self.modulation_data = self.modulation_data[self.modulation_data[:, 0] - self.modulation_data[:, 1] >= zeroday]
         self.modulation_data[:, 0] -= zeroday
         
         # Compute response function and unoscillated flux
-        self.energy_obs = np.array([[threshold, 19.5]])
-        self.response_function = self.frame._response_function(self.energy_obs, self.frame.energy_recoil)
         self.unoscillated_flux = self.frame._compute_unoscilated_signal(
             self.frame.energy_recoil,
             self.frame.energy_nu,
             self.frame.spectrum_nu,
-            self.energy_obs,
             self.frame.cs_electron,
-            self.response_function,
+            self.efficiency,
         )
         
         # Default parameters
@@ -90,20 +95,17 @@ class SuperKFlux:
 
 
         # Map integrals to observed energy bins
-        num_obs_bins = len(self.energy_obs)
+        num_obs_bins = len(self.efficiency)
         integral_electron_recoil = np.zeros((num_obs_bins))
         integral_muon_recoil = np.zeros((num_obs_bins))
 
         for i in range(num_obs_bins):
             integral_electron_recoil[i] = np.trapz(
-                self.response_function[i] * integral_electron , self.frame.energy_recoil
+                self.efficiency[i] * integral_electron , self.frame.energy_recoil
             )
             integral_muon_recoil[i] = np.trapz(
-                self.response_function[i] * integral_muon, self.frame.energy_recoil
+                self.efficiency[i] * integral_muon, self.frame.energy_recoil
             )
-
-        # integral_electron_recoil = np.trapz( integral_electron * , self.frame.energy_recoil)
-        # integral_muon_recoil = np.trapz( integral_muon, self.frame.energy_recoil)
             
         # Compute total events
         oscilated_flux = ((integral_electron_recoil + integral_muon_recoil)/self.unoscillated_flux )

@@ -12,7 +12,7 @@ class SuperKSpectrum:
         resolution_correction = True
         self.frame = FrameWork(resolution_correction, first_day, last_day)
         self.total_volume = 22.5  # Total detector volume in kilotons
-        self.SNO_norm = 1e-4 * self.frame.norm
+        self.SNO_norm = 1e-4 * 5.25
         self.distance = self.frame.distance_list
 
         # Load spectrum data from file
@@ -25,7 +25,6 @@ class SuperKSpectrum:
             self.frame.energy_recoil,
             self.frame.energy_nu,
             self.frame.spectrum_nu,
-            self.energy_obs,
             self.frame.cs_electron,
             self.response_function,
         )

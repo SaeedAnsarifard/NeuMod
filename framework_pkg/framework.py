@@ -3,7 +3,7 @@ import numpy as np
 from datetime import datetime
 from skyfield.api import load, utc
 
-#from framework_pkg.survival_probablity import PseudoDirac
+from framework_pkg.survival_probablity import MSW , PseudoDirac
 
 # Global Constants
 FERMI_CONSTANT = 1.166  # e-11 MeV^-2
@@ -29,17 +29,19 @@ class FrameWork:
     - last_day: End date in the format 'year,month,day' (default is '2018,5,30').
     """
 
-    def __init__(self, resolution_correction=False, first_day='2008,9,15', last_day='2018,5,30'):
+    def __init__(self, threshold=3.5, efficiency_correction=True, resolution_correction=False, first_day='2008,9,15', last_day='2018,5,30'):
         self.resolution_correction = resolution_correction
-        
+        self.efficiency_correction = efficiency_correction
+
         self.firstday = self._parse_date(first_day)
         self.lastday = self._parse_date(last_day)
         self.total_days = int(self.lastday - self.firstday)
         
         # Neutrino flux normalization from SNO
-        self.norm = 5.25  # x 10^6 cm^-2 s^-1
+        self.SNO_norm = 1e-4 * 5.25  # x 10^10 cm^-2 s^-1
         self.target_number = (10/18) * (1/1.67) * 6. * 6. * 24. #per day per kilo ton 10^35
-        
+        self.total_volume = 22.5  # Total detector volume in kilotons
+
         # Load neutrino energy spectrum (B8 spectrum)
         spectrumB8 = np.loadtxt('./Spectrum/B8_spectrum.txt')
         self.spectrum_nu = spectrumB8[:, 1]
@@ -47,6 +49,7 @@ class FrameWork:
 
         # Calculate recoil energy (in MeV)
         self.energy_recoil = spectrumB8[:, 0] / (1 + ELECTRON_MASS / (2 * spectrumB8[:, 0]))
+        self.energy_recoil = np.concatenate((np.logspace(-5,-2,30), self.energy_recoil))
 
         t0 = time_scale.utc(datetime(1970, 1, 1, 0, 0, 0, tzinfo=utc))
         self.zeroday = self.firstday.tt - t0.tt
@@ -58,6 +61,126 @@ class FrameWork:
         # neutrino electron/moun elastic scattering cross section
         self.cs_electron = self._compute_cross_section(self.energy_nu, self.energy_recoil, 1)
         self.cs_muon = self._compute_cross_section(self.energy_nu, self.energy_recoil, -1)
+
+
+        # Load modulation data from file
+        self.modulation_data = np.loadtxt('./Data/sksolartimevariation5804d.txt')
+        self.modulation_data[:, :3] /= (60. * 60. * 24.)  # Convert time columns to days
+        self.modulation_data = self.modulation_data[self.modulation_data[:, 0] - self.modulation_data[:, 1] >= self.zeroday]
+        self.modulation_data[:, 0] -= self.zeroday
+
+        # Load spectrum data from file
+        self.spectrum_data = np.loadtxt('./Data/B8_SuperK_Spectrum_2023.txt')
+        self.energy_obs = self.spectrum_data[:, :2]
+
+        self.response_function = self._response_function(self.energy_obs, self.energy_recoil)
+        self.efficiency = self._efficiency_function(self.energy_recoil, threshold)
+
+        if self.resolution_correction:
+            # Map integrals to observed energy bins
+            self.weight = self.response_function
+        elif self.efficiency_correction:
+            # Map integrals to total signal with reduction efficiency 
+            self.weight = self.efficiency
+        else:
+            # Map integrals to total ideal signal without reduction efficiency 
+            self.weight = [1]
+
+        # Compute response function and unoscillated integral
+        self.unoscillated_term = self._compute_unoscilated_signal(
+            self.energy_recoil,
+            self.energy_nu,
+            self.spectrum_nu,
+            self.cs_electron,
+            self.weight
+        )
+        self.pridection = 0 
+    
+        if self.resolution_correction: 
+            # Compute unoscillated expected spectrum per day per 22.5 kiloton
+            self.unoscillated_expected_spectrum = (
+                self.total_volume
+                * self.SNO_norm
+                * self.target_number
+                * self.unoscillated_term
+            )
+        elif self.efficiency_correction:
+            pass
+        else:
+            # Compute unoscillated events per day per 32.5 kiloton
+            self.unoscillated_expected_event_rate = (
+                32.5
+                * self.SNO_norm
+                * self.target_number
+                * self.unoscillated_term
+            )
+
+        # Default parameters
+        self.param = {'SinT12': 0.319, 'T13': 8.57, 'M12': 7.54e-5}
+
+
+    def __getitem__(self, param_update, name="MSW"):
+        """
+        Compare the oscilated and unoscillated signal given updated parameters.
+
+        Parameters:
+            param_update (dict): Dictionary containing updated parameter values.
+            name (string) : name of survival probablity function (MSW or PseudoDirac)
+
+        Returns:
+            flux in cm^-2 s^-1 times 10^6 for electron recoil larger than masked_val 
+            in the period of first_day and last_day
+        """
+
+        # Compute survival probability using the specified method
+        if name == "MSW":
+            self.param.update(param_update)
+            survival_probability = MSW(self.param, self.energy_nu)
+            appearance = survival_probability * np.mean(1 / self.distance_list**2)
+            disappearance = (1 - survival_probability) * np.mean(1 / self.distance_list**2)
+        elif name == "PseudoDirac":
+            if "mum1" not in param_update:
+                param_update["mum1"] = 0  # Set a default value for param3
+            if "mum2" not in param_update:
+                param_update["mum2"] = 1.5  # Set a default value for param3
+            if "mum3" not in param_update:
+                param_update["mum3"] = 0  # Set a default value for param3
+
+            self.param.update(param_update)
+            survival_probability, sterile_probability = PseudoDirac(self.param, self.distance_list, self.energy_nu)
+            appearance = np.mean(survival_probability / self.distance_list[:,np.newaxis]**2, axis=0)
+            disappearance = np.mean((1 - survival_probability - sterile_probability) / self.distance_list[:,np.newaxis]**2, axis= 0 )
+        else:
+            raise ValueError(f"Unsupported survival probability method: {name}")
+
+        # Initialize integral arrays
+        num_recoil_bins = len(self.energy_recoil)
+        integral_electron = np.zeros((num_recoil_bins))
+        integral_muon = np.zeros((num_recoil_bins))
+
+        # Compute the electron and muon integrals
+        z = 0
+        for k in range(num_recoil_bins):
+            if k < num_recoil_bins - len(self.energy_nu) :
+                integral_electron[k] = np.trapz(
+                self.spectrum_nu * self.cs_electron[k, :] * appearance, self.energy_nu)
+                integral_muon[k] = np.trapz(
+                    self.spectrum_nu * self.cs_muon[k, :] * disappearance, self.energy_nu)
+            else:
+                integral_electron[k] = np.trapz(
+                    self.spectrum_nu[z:] * self.cs_electron[k, z:] * appearance[z:], self.energy_nu[z:])
+                integral_muon[k] = np.trapz(
+                    self.spectrum_nu[z:] * self.cs_muon[k, z:] * disappearance[z:], self.energy_nu[z:])
+                z = z + 1
+
+        integral_electron_recoil = np.zeros((len(self.weight)))
+        integral_muon_recoil = np.zeros((len(self.weight)))
+        for i in range(len(self.weight)):
+            integral_electron_recoil[i] = np.trapz( self.weight[i] * integral_electron, self.energy_recoil)
+            integral_muon_recoil[i] = np.trapz( self.weight[i] * integral_muon, self.energy_recoil)
+
+        self.pridection = integral_electron_recoil + integral_muon_recoil
+        return (integral_electron_recoil + integral_muon_recoil) / self.unoscillated_term 
             
     def _parse_date(self, date_str):
         """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""
@@ -114,24 +237,34 @@ class FrameWork:
                 r[j,i] = np.trapz(a,e_nu)
         return r
     
-    def _compute_unoscilated_signal(self, energy_recoil, energy_nu, spectrum_nu, energy_obs, cs_electron, resp_func):
-        from scipy import interpolate
+    def _efficiency_function(self, energy_recoil, threshold):
+        """
+        Taken from PhysRevD.109.092001 (Solar neutrino measurements using the full data period of Super-Kamiokande-IV)
+        """
+
+        import pandas as pd
+
+        superk_efficiency = np.array(pd.read_csv('./Data/superk_efficiency.csv'))
+        superk_efficiency[0,0] = 3.5
+        x = superk_efficiency[superk_efficiency[:,0]>= threshold,0]
+        xp = superk_efficiency[superk_efficiency[:,0]>= threshold,1]
+        right = superk_efficiency[-1,1]
+        return np.interp(energy_recoil, x, xp, left=0, right=right)[np.newaxis,:]
+    
+    def _compute_unoscilated_signal(self, energy_recoil, energy_nu, spectrum_nu, cs_electron, weight):
         """Compute the unoscillated signal. The cross section is in unit of 10^{-45} cm^2"""
-        r         = np.zeros(energy_recoil.shape)
-        num_event = np.zeros(len(energy_obs))
-        
-        for z, ts in enumerate(energy_recoil):
-            if (len(energy_nu) - len(energy_nu[z:]))/len(energy_nu) >= 0.8 :
-                r[z] = np.trapz(spectrum_nu * cs_electron[z,:], energy_nu) - np.trapz(spectrum_nu[:z] * cs_electron[z,:z], energy_nu[:z])
+        r  = np.zeros(energy_recoil.shape)
+        k = 0 
+        for z in range (len(energy_recoil)):
+            if z < len(energy_recoil) - len(energy_nu):
+                r[z] = np.trapz(spectrum_nu * cs_electron[z,:], energy_nu) 
             else:
-                r[z] = np.trapz(spectrum_nu[z:] * cs_electron[z,z:], energy_nu[z:])
-                
-        if self.resolution_correction:
-            for i in range(len(energy_obs)):
-                num_event[i] = np.trapz( r * resp_func[i], energy_recoil)
-        else:
-            for i in range(len(energy_obs)):
-                num_event[i] = np.trapz( r , energy_recoil)
+                r[z] = np.trapz(spectrum_nu[k:] * cs_electron[z,k:], energy_nu[k:])
+                k = k + 1
+        
+        num_event = np.zeros(len(weight))
+        for i in range(len(weight)):
+            num_event[i] = np.trapz( r * weight[i] , energy_recoil)
         return num_event
 
     def _compute_cross_section(self, e_nu, t_e, i=1):
@@ -174,3 +307,22 @@ class FrameWork:
         
         # Differential cross-section in units of 10^-45 cm^2
         return 2 * HBARC_FERMI_CONSTANT**2 * (ELECTRON_MASS / np.pi) * (a1 + a2 - a3) * 10
+    
+    def _pridection_function(self):
+        if self.resolution_correction: 
+            # spectrum events per day per 22.5 kiloton with oscillations
+            return ( 
+                self.total_volume
+                * self.SNO_norm
+                * self.target_number
+                * self.pridection
+                )
+        elif self.efficiency_correction:
+            return None
+        else:
+            return (
+                32.5
+                * self.SNO_norm
+                * self.target_number
+                * self.pridection
+                )

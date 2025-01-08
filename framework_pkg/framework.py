@@ -128,8 +128,7 @@ class FrameWork:
             name (string) : name of survival probablity function (MSW or PseudoDirac)
 
         Returns:
-            flux in cm^-2 s^-1 times 10^6 for electron recoil larger than masked_val 
-            in the period of first_day and last_day
+            Spectrum of events per day after applying oscillation effects.
         """
 
         # Compute survival probability using the specified method

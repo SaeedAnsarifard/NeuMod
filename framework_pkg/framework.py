@@ -56,7 +56,7 @@ class FrameWork:
 
         # Geometric characteristic: Sun-Earth distance time step (in day, 1 is a fair choice)
         self.time_step = 1
-        self.distance_list, self.day_list = self._sun_earth_distance(self.firstday, self.total_days, self.time_step)
+        self.distance_list, self.day_list, self.angle_list = self._sun_earth_distance(self.firstday, self.total_days, self.time_step)
         
         # neutrino electron/moun elastic scattering cross section
         self.cs_electron = self._compute_cross_section(self.energy_nu, self.energy_recoil, 1)
@@ -211,6 +211,7 @@ class FrameWork:
         t_array     = np.arange(0, total_days, time_step)
         dtheory_sun = np.zeros(len(t_array))
         day_sun     = np.zeros(len(t_array))
+        lat_sun     = np.zeros(len(t_array))
      
         for i,dt in enumerate(t_array):
             tstep = start_date + dt
@@ -218,12 +219,14 @@ class FrameWork:
             astrometric_sun    = earth.at(tstep).observe(sun)
             lat, lon, distance = astrometric_sun.radec()
             dtheory_sun[i]     = distance.au
-            
+            lat_sun[i]         = lat._degrees
             day_sun[i]         = np.mod(dt,365.25)/365.25   # :)
 
         day_sun -= day_sun[dtheory_sun==np.min(dtheory_sun)]
         day_sun[day_sun<0] += 1
-        return dtheory_sun, day_sun
+        lat_sun -= lat_sun[dtheory_sun == np.min(dtheory_sun)]
+        lat_sun[lat_sun<0] += 360
+        return dtheory_sun, day_sun, lat_sun
     
     def _response_function(self, energy_obs, energy_recoil):
         """Compute the detector's response function. It is used to peredict the Super-Kamiokande spectrum data """

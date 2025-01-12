@@ -1,6 +1,6 @@
 import numpy as np
-
-from framework_pkg.framework import _sun_earth_distance
+from datetime import datetime
+from skyfield.api import load, utc
 
 # Global constants
 FERMI_CONSTANT = 1.166  # e-11 MeV^-2
@@ -9,6 +9,9 @@ HBAR_C = 1.97  # e-11 MeV cm
 LIGHT_SPEED = 2.998 # 1e8 m/s
 RHO_DM2  = np.sqrt(2 * 0.4 * 7.65) #e-21 GeV^2
 ECCENTRICITY = (1.521 - 1.471)/(1.521 + 1.471)
+
+
+time_scale = load.timescale()  # Create a timescale object
 
 # Load data
 phi = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[6, :]
@@ -133,23 +136,19 @@ def ULDM(param, enu):
     mu1 and mu2 are in GeV^{-1}
     alpha is in degrees
     mdm is in 1e-21 eV
-    - ls: 2D Array with shape (2,N) of solar distances in AU and solar angle in degrees.
+    
     - enu: Array of neutrino energies in MeV.
     
     Returns:
     - pel: Electron neutrino survival probabilities.
     - psl: Sterile neutrino survival probabilities.
+    - ls: solar distances in AU and solar angle in degrees.
     """
- 
-    
-    angle = np.arange(0, 2 * np.pi, 0.01)
-    cos_angle  = np.cos(angle)
-    ls    = (1 - ECCENTRICITY**2) / (1 + ECCENTRICITY * cos_angle)   
-    year  = 6.0 * 6.0 * 2.4 * 3.6525 * 1e5 / 66. # in 1e21 ev^-1 
-    
-    year_list     = np.linspace(0, year, len(ls))
+        
+    ls, year, angle = SunEarthDistance(ParseDate('2020,1,1'), 365.25, 0.5)
+    year_list = year * 3.6525 * 2.4 * 6. * 6. / 6.6 # in 1e21 eV^-1
     ls_meters = 1.496 * ls  # 1e11 Convert AU to meters
-    th_radians = np.radians(cos_angle) 
+    th_radians = np.radians(angle) 
 
     pel = np.zeros((len(ls), len(enu)))
     psl = np.zeros((len(ls), len(enu)))
@@ -168,7 +167,6 @@ def ULDM(param, enu):
     
     sin_theta13 = np.sin(np.radians(param['T13']))
     cos_theta13 = np.cos(np.radians(param['T13']))
-    
     
     den = np.sqrt((param['M12'] * cos_2theta12 - ve)**2 + (param['M12'] * sin_2theta12)**2)
     nom = param['M12'] * cos_2theta12 - ve
@@ -195,20 +193,56 @@ def ULDM(param, enu):
     
     polar_vec = np.sqrt((1 + ( param['epsx'] * np.cos(th_radians) - param['epsy'] * np.sin(th_radians))**2))
     
-
-    mass_var = 1e3 * (RHO_DM2/param['mdm']) * (np.cos(param['mdm'] * year_list + np.radians(param['alpha'])) 
-                                  - np.cos(param['mdm'] * (year_list + 1e-3 * ls_meters/HBAR_C) + np.radians(param['alpha'])))
-
-    ae1 = cos_theta13**4 * cos_theta12_2 * cos_tm_distributed * np.cos(param['mu1'] * polar_vec * mass_var)
-    ae2 = cos_theta13**4 * sin_theta12_2 * sin_tm_distributed * np.cos(param['mu2'] * polar_vec * mass_var)
     
+    mass_var = 1e9 * (RHO_DM2/param['mdm']) * (np.cos(param['mdm'] * year_list + np.radians(param['alpha'])) 
+                                  - np.cos(param['mdm'] * (year_list + (1e-2/6.6) * ls_meters/LIGHT_SPEED) + np.radians(param['alpha'])))
+
     
+    ae1 = cos_theta13**4 * cos_theta12_2 * cos_tm_distributed * np.cos(param['mu1'] * polar_vec * mass_var)**2
+    ae2 = cos_theta13**4 * sin_theta12_2 * sin_tm_distributed * np.cos(param['mu2'] * polar_vec * mass_var)**2
+        
     pel = ae1 + ae2 
 
-    # as1 = cos_theta13**2 * cos_tm_distributed * np.sin(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    # as2 = cos_theta13**2 * sin_tm_distributed * np.sin(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    # as3 = sin_theta13**2 * np.sin(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    as1 = cos_theta13**2 * cos_tm_distributed * np.sin(param['mu1'] * polar_vec * mass_var)**2
+    as2 = cos_theta13**2 * sin_tm_distributed * np.sin(param['mu2'] * polar_vec * mass_var)**2
+    as3 = sin_theta13**2 * np.sin(param['mu3'] * polar_vec * mass_var)**2
 
-    # psl = as1 + as2 + as3
+    psl = as1 + as2 + as3
 
-    return pel, psl, ls_meters/1.496
+    return pel, psl, ls_meters/1.496, angle
+
+def ParseDate(date_str):
+    """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""
+    year, month, day = map(int, date_str.split(','))
+    date = datetime(year, month, day, 0, 0, 0, tzinfo=utc)
+    return time_scale.utc(date)
+    
+
+
+def SunEarthDistance(start_date, total_days, time_step):
+    """Calculate Sun-Earth distance over a period."""
+    
+    """Load the JPL ephemeris DE421 (covers 1900-2050).
+    https://ui.adsabs.harvard.edu/abs/2019ascl.soft07024R """
+
+    planets     = load('./JPL_ephemeris/de421.bsp')
+    sun,earth   = planets['sun'],planets['earth']
+    t_array     = np.arange(0, total_days, time_step)
+    dtheory_sun = np.zeros(len(t_array))
+    day_sun     = np.zeros(len(t_array))
+    lat_sun     = np.zeros(len(t_array))
+    
+    for i,dt in enumerate(t_array):
+        tstep = start_date + dt
+        
+        astrometric_sun    = earth.at(tstep).observe(sun)
+        lat, lon, distance = astrometric_sun.radec()
+        dtheory_sun[i]     = distance.au
+        lat_sun[i]         = lat._degrees
+        day_sun[i]         = np.mod(dt,365.25)/365.25   # :)
+
+    day_sun -= day_sun[dtheory_sun==np.min(dtheory_sun)]
+    day_sun[day_sun<0] += 1
+    lat_sun -= lat_sun[dtheory_sun == np.min(dtheory_sun)]
+    lat_sun[lat_sun<0] += 360
+    return dtheory_sun, day_sun, lat_sun

@@ -3,7 +3,9 @@ import numpy as np
 from datetime import datetime
 from skyfield.api import load, utc
 
-from framework_pkg.survival_probablity import MSW , PseudoDirac
+from framework_pkg.survival_probablity import SunEarthDistance, ParseDate
+
+from framework_pkg.survival_probablity import MSW, PseudoDirac
 
 # Global Constants
 FERMI_CONSTANT = 1.166  # e-11 MeV^-2
@@ -33,8 +35,8 @@ class FrameWork:
         self.resolution_correction = resolution_correction
         self.efficiency_correction = efficiency_correction
 
-        self.firstday = self._parse_date(first_day)
-        self.lastday = self._parse_date(last_day)
+        self.firstday = ParseDate(first_day)
+        self.lastday = ParseDate(last_day)
         self.total_days = int(self.lastday - self.firstday)
         
         # Neutrino flux normalization from SNO
@@ -56,7 +58,7 @@ class FrameWork:
 
         # Geometric characteristic: Sun-Earth distance time step (in day, 1 is a fair choice)
         self.time_step = 1
-        self.distance_list, self.day_list, self.angle_list = self._sun_earth_distance(self.firstday, self.total_days, self.time_step)
+        self.distance_list, self.day_list, self.angle_list = SunEarthDistance(self.firstday, self.total_days, self.time_step)
         
         # neutrino electron/moun elastic scattering cross section
         self.cs_electron = self._compute_cross_section(self.energy_nu, self.energy_recoil, 1)
@@ -181,11 +183,7 @@ class FrameWork:
         self.pridection = integral_electron_recoil + integral_muon_recoil
         return (integral_electron_recoil + integral_muon_recoil) / self.unoscillated_term 
             
-    def _parse_date(self, date_str):
-        """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""
-        year, month, day = map(int, date_str.split(','))
-        date = datetime(year, month, day, 0, 0, 0, tzinfo=utc)
-        return time_scale.utc(date)
+
     
     def _bin_data(self, data):
         """Bins the data based on unique distance in the data."""
@@ -199,35 +197,7 @@ class FrameWork:
             data_new[2].append(np.sqrt(np.sum(error[cond]**2))/len(error[cond]))
             data_new[3].append(0.5*(d_unique[i]-d_unique[i+1]))
         return np.array(data_new).T
-    
-    def _sun_earth_distance(self, start_date, total_days, time_step):
-        """Calculate Sun-Earth distance over a period."""
         
-        """Load the JPL ephemeris DE421 (covers 1900-2050).
-        https://ui.adsabs.harvard.edu/abs/2019ascl.soft07024R """
-    
-        planets     = load('./JPL_ephemeris/de421.bsp')
-        sun,earth   = planets['sun'],planets['earth']
-        t_array     = np.arange(0, total_days, time_step)
-        dtheory_sun = np.zeros(len(t_array))
-        day_sun     = np.zeros(len(t_array))
-        lat_sun     = np.zeros(len(t_array))
-     
-        for i,dt in enumerate(t_array):
-            tstep = start_date + dt
-            
-            astrometric_sun    = earth.at(tstep).observe(sun)
-            lat, lon, distance = astrometric_sun.radec()
-            dtheory_sun[i]     = distance.au
-            lat_sun[i]         = lat._degrees
-            day_sun[i]         = np.mod(dt,365.25)/365.25   # :)
-
-        day_sun -= day_sun[dtheory_sun==np.min(dtheory_sun)]
-        day_sun[day_sun<0] += 1
-        lat_sun -= lat_sun[dtheory_sun == np.min(dtheory_sun)]
-        lat_sun[lat_sun<0] += 360
-        return dtheory_sun, day_sun, lat_sun
-    
     def _response_function(self, energy_obs, energy_recoil):
         """Compute the detector's response function. It is used to peredict the Super-Kamiokande spectrum data """
         r   = np.zeros((len(energy_obs),len(energy_recoil)))
@@ -328,3 +298,4 @@ class FrameWork:
                 * self.target_number
                 * self.pridection
                 )
+        

@@ -1,0 +1,3 @@
+[submodule "external/PEANUTS"]
+    path = external/PEANUTS
+    url = https://github.com/SaeedAnsarifard/PEANUTS.git

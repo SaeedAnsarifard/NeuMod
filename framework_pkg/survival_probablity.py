@@ -1,6 +1,25 @@
+import os
+import sys
 import numpy as np
+import numba as nb
+from numba import njit, prange
+
 from datetime import datetime
 from skyfield.api import load, utc
+
+from numpy import arcsin
+from math import sqrt, pi, radians
+
+# Get the current working directory
+peanuts_path = os.path.abspath(os.path.join(os.getcwd(), "external", "PEANUTS"))
+
+# Add PEANUTS to the Python path
+sys.path.append(peanuts_path)
+
+from peanuts.pmns import PMNS
+from peanuts.solar import SolarModel, solar_flux_mass
+from peanuts.earth import EarthDensity
+from peanuts.evolutor import FullEvolutor
 
 # Global constants
 FERMI_CONSTANT = 1.166  # e-11 MeV^-2
@@ -8,56 +27,66 @@ ELECTRON_MASS = 0.511  # MeV
 HBAR_C = 1.97  # e-11 MeV cm
 LIGHT_SPEED = 2.998 # 1e8 m/s
 RHO_DM2  = np.sqrt(2 * 0.4 * 7.65) #e-21 GeV^2
-ECCENTRICITY = (1.521 - 1.471)/(1.521 + 1.471)
-
+ASTRO_UNIT    =  1.496 #1e11 m
 
 time_scale = load.timescale()  # Create a timescale object
 
 # Load data
-phi = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[6, :]
-n_e = 6 * 10**np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[2, :]   # 1e23 cm^-3
+#phi = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[6, :]
+#n_e = 6 * 10**np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[2, :]   # 1e23 cm^-3
 
 
-def MSW(param, enu):
+def MSW(param, enu, eta):
     """
     Calculate the survival probabilities for MSW neutrinos.
     
     Parameters:
     - param: Dictionary containing the physical parameters ('M12', 'SinT12', 'T13').
     - enu: Array of neutrino energies in MeV.
+    - eta: None for the case dont considering earth matter effect, otherwise a list of angle in radian
     
     Returns:
     - pee: Electron neutrino survival probabilities.
     """
         
-    util = np.ones((len(n_e), len(enu)))
-    ne = n_e[:, np.newaxis] * util
-    e = enu[np.newaxis, :] * util
+    th12 = arcsin(sqrt(param['SinT12']))
+    th13 = radians(param['T13'])
+    th23 = 0.85521
 
-    ve = 2 * np.sqrt(2) * FERMI_CONSTANT * ne * HBAR_C**3 * 1e-9 * e
+    d = 3.4034
+    pmns = PMNS(th12, th13, th23, d)
+
+    DeltamSq21 = param['M12']
+    DeltamSq3l = 2.46e-3
+    
+    # Get arguments
+    fraction = "8B"
+    
+    
+    # Get the current directory path
+    path = os.path.dirname(os.path.realpath(__file__))
+    parent_dir = os.path.dirname(path)
+    path = os.path.join(parent_dir, 'external', 'PEANUTS')
+    solar_file  = path+'/Data/bs2005agsopflux.csv'
+    solar_model = SolarModel(solar_file)
+
+    radius_profile = solar_model.radius()
+    density_profile = solar_model.density()
+    flux_distributin = solar_model.fraction(fraction)
+    mass_weights = np.zeros((enu.shape[0],3))
+    for i in prange(enu.shape[0]):
+        mass_weights[i] = solar_flux_mass(th12, th13, DeltamSq21, DeltamSq3l, enu[i], radius_profile, density_profile, flux_distributin)
+    
+    # Earth density
+    density_file = path+'/Data/Earth_Density.csv' 
+    earth_density = EarthDensity(density_file=density_file)
+    pee = np.zeros((eta.shape[0], enu.shape[0]))
+    for j in range(len(eta)):
+        evol = EarthEvolution(enu, eta[j], earth_density, DeltamSq21, DeltamSq3l, pmns)
+        evolved = np.square(np.abs((evol @ pmns.pmns[np.newaxis])))
+        pee[j] = (evolved @ mass_weights[:, :, np.newaxis])[:, 0, 0]
         
-    sin_theta12_2 = param['SinT12']
-    cos_theta12_2 = 1 - sin_theta12_2
-    
-    cos_2theta12 = 1 - 2 * sin_theta12_2
-    sin_2theta12 = 2 * np.sqrt(param['SinT12'] -  param['SinT12']**2)
-    
-    sin_theta13 = np.sin(np.radians(param['T13']))
-    cos_theta13 = np.cos(np.radians(param['T13']))
-    
-    den = np.sqrt((param['M12'] * cos_2theta12 - ve)**2 + (param['M12'] * sin_2theta12)**2)
-    nom = param['M12'] * cos_2theta12 - ve
-    
-    tm = 0.5 * np.arccos(nom / den)
-  
-    cos_tm_distributed = np.sum(phi[:, np.newaxis] * np.cos(tm)**2, axis=0)
-    sin_tm_distributed = np.sum(phi[:, np.newaxis] * np.sin(tm)**2, axis=0)
-    
-    ae1 = cos_theta13**4 * cos_theta12_2 * cos_tm_distributed
-    ae2 = cos_theta13**4 * sin_theta12_2 * sin_tm_distributed
-    ae3 = sin_theta13**4
-    
-    return ae1 + ae2 + ae3
+    return pee    
 
 
 def PseudoDirac(param, ls, enu):
@@ -73,60 +102,62 @@ def PseudoDirac(param, ls, enu):
     - pel: Electron neutrino survival probabilities.
     - psl: Sterile neutrino survival probabilities.
     """
-    ls_meters = 1.496 * ls  # 1e11 Convert AU to meters
-    pel = np.zeros((len(ls), len(enu)))
-    psl = np.zeros((len(ls), len(enu)))
+    # ls_meters = 1.496 * ls  # 1e11 Convert AU to meters
+    # pel = np.zeros((len(ls), len(enu)))
+    # psl = np.zeros((len(ls), len(enu)))
 
-    util = np.ones((len(n_e), len(enu)))
-    ne = n_e[:, np.newaxis] * util
-    e = enu[np.newaxis, :] * util
+    # util = np.ones((len(n_e), len(enu)))
+    # ne = n_e[:, np.newaxis] * util
+    # e = enu[np.newaxis, :] * util
 
-    ve = 2 * np.sqrt(2) * FERMI_CONSTANT * ne * HBAR_C**3 * 1e-9 * e
+    # ve = 2 * np.sqrt(2) * FERMI_CONSTANT * ne * HBAR_C**3 * 1e-9 * e
         
-    sin_theta12_2 = param['SinT12']
-    cos_theta12_2 = 1 - sin_theta12_2
+    # sin_theta12_2 = param['SinT12']
+    # cos_theta12_2 = 1 - sin_theta12_2
     
-    cos_2theta12 = 1 - 2 * sin_theta12_2
-    sin_2theta12 = 2 * np.sqrt(param['SinT12'] -  param['SinT12']**2)
+    # cos_2theta12 = 1 - 2 * sin_theta12_2
+    # sin_2theta12 = 2 * np.sqrt(param['SinT12'] -  param['SinT12']**2)
     
-    sin_theta13 = np.sin(np.radians(param['T13']))
-    cos_theta13 = np.cos(np.radians(param['T13']))
+    # sin_theta13 = np.sin(np.radians(param['T13']))
+    # cos_theta13 = np.cos(np.radians(param['T13']))
     
     
-    den = np.sqrt((param['M12'] * cos_2theta12 - ve)**2 + (param['M12'] * sin_2theta12)**2)
-    nom = param['M12'] * cos_2theta12 - ve
+    # den = np.sqrt((param['M12'] * cos_2theta12 - ve)**2 + (param['M12'] * sin_2theta12)**2)
+    # nom = param['M12'] * cos_2theta12 - ve
     
-    tm = 0.5 * np.arccos(nom / den)
+    # tm = 0.5 * np.arccos(nom / den)
   
-    cos_tm_distributed = np.sum(phi[:, np.newaxis] * np.cos(tm)**2, axis=0)[np.newaxis,:]
-    sin_tm_distributed = np.sum(phi[:, np.newaxis] * np.sin(tm)**2, axis=0)[np.newaxis,:]
+    # cos_tm_distributed = np.sum(phi[:, np.newaxis] * np.cos(tm)**2, axis=0)[np.newaxis,:]
+    # sin_tm_distributed = np.sum(phi[:, np.newaxis] * np.sin(tm)**2, axis=0)[np.newaxis,:]
     
-    cos_tm_distributed = np.repeat(cos_tm_distributed,len(ls),axis=0)
-    sin_tm_distributed = np.repeat(sin_tm_distributed,len(ls),axis=0)
+    # cos_tm_distributed = np.repeat(cos_tm_distributed,len(ls),axis=0)
+    # sin_tm_distributed = np.repeat(sin_tm_distributed,len(ls),axis=0)
     
-    ls_meters = ls_meters[:,np.newaxis]
-    ls_meters = np.repeat(ls_meters,len(enu),axis=1)
+    # ls_meters = ls_meters[:,np.newaxis]
+    # ls_meters = np.repeat(ls_meters,len(enu),axis=1)
     
-    e_extend = enu[np.newaxis,:]
-    e_extend = np.repeat(e_extend,len(ls),axis=0)
+    # e_extend = enu[np.newaxis,:]
+    # e_extend = np.repeat(e_extend,len(ls),axis=0)
     
-    ae1 = cos_theta13**4 * cos_theta12_2 * cos_tm_distributed * np.cos(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    ae2 = cos_theta13**4 * sin_theta12_2 * sin_tm_distributed * np.cos(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    ae3 = sin_theta13**4 * np.cos(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    # ae1 = cos_theta13**4 * cos_theta12_2 * cos_tm_distributed * np.cos(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    # ae2 = cos_theta13**4 * sin_theta12_2 * sin_tm_distributed * np.cos(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    # ae3 = sin_theta13**4 * np.cos(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
 
-    pel = ae1 + ae2 + ae3
+    # pel = ae1 + ae2 + ae3
 
-    as1 = cos_theta13**2 * cos_tm_distributed * np.sin(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    as2 = cos_theta13**2 * sin_tm_distributed * np.sin(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    as3 = sin_theta13**2 * np.sin(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    # as1 = cos_theta13**2 * cos_tm_distributed * np.sin(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    # as2 = cos_theta13**2 * sin_tm_distributed * np.sin(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
+    # as3 = sin_theta13**2 * np.sin(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
 
-    psl = as1 + as2 + as3
+    # psl = as1 + as2 + as3
 
-    return pel, psl
+    # return pel, psl
+    
+    return None
 
 
 
-def ULDM(param, enu):
+def ULDM(param, enu, eta, theta, distance, day):
     """
     Calculate the survival probabilities for solar neutrinos in presence of ultra light dark matter field.
     
@@ -136,80 +167,86 @@ def ULDM(param, enu):
     mu1 and mu2 are in GeV^{-1}
     alpha is in degrees
     mdm is in 1e-21 eV
-    
+    epsx^2 + epsy^2 <= 1
+
     - enu: Array of neutrino energies in MeV.
+    - eta: Array of diurnal angles in radian.
+    - theta: Array of annual angles in radian.
+    - distance: Array of distance between earth and sun corresponding to theta.
+    - day: Array of earth day corresponding to theta.
     
     Returns:
-    - pel: Electron neutrino survival probabilities.
-    - psl: Sterile neutrino survival probabilities.
-    - ls: solar distances in AU and solar angle in degrees.
+    - pee: Electron neutrino survival probabilities.
+    - pes: Sterile neutrino probabilities.
     """
+
+    day_list  = day * 3.6525 * 2.4 * 6. * 6. / 6.6 # in 1e21 eV^-1
+    polar_vec = np.sqrt((1 - ( param['epsx'] * np.cos(theta) + param['epsy'] * np.sin(theta))**2))
+    
+    mass_var = 1e9 * (RHO_DM2/param['mdm']) * (np.cos(param['mdm'] * day_list + np.radians(param['alpha'])) 
+                                    - np.cos(param['mdm'] * (day_list + (1e-2/6.6) * distance * ASTRO_UNIT/LIGHT_SPEED) + np.radians(param['alpha'])))
+    
+    
+    uldm_term1 = np.cos(param['mu1'] * polar_vec * mass_var)**2 / distance**2 
+    uldm_term2 = np.cos(param['mu2'] * polar_vec * mass_var)**2 / distance**2 
+    uldm_term3 = np.cos(param['mu3'] * polar_vec * mass_var)**2 / distance**2 
+    uldm_term  = np.array([uldm_term1,uldm_term2,uldm_term3]).T 
+
+    th12 = arcsin(sqrt(param['SinT12']))
+    th13 = radians(param['T13'])
+    th23 = 0.85521
+
+    DeltamSq21 = param['M12']
+    DeltamSq3l = 2.46e-3
+    
+    # Get arguments
+    fraction = "8B"
+
+    
+    # Get the current directory path
+    path = os.path.dirname(os.path.realpath(__file__))
+    parent_dir = os.path.dirname(path)
+    path = os.path.join(parent_dir, 'external', 'PEANUTS')
+    solar_file  = path+'/Data/bs2005agsopflux.csv'
+    solar_model = SolarModel(solar_file)
+
+    radius_profile = solar_model.radius()
+    density_profile = solar_model.density()
+    flux_distributin = solar_model.fraction(fraction)
+    mass_weights_active = np.zeros((distance.shape[0], enu.shape[0], 3))
+    mass_weights_sterile = np.zeros((distance.shape[0], enu.shape[0], 3))
+    for i in prange(enu.shape[0]):
+        mass_weights_naked = solar_flux_mass(th12, th13, DeltamSq21, DeltamSq3l, enu[i], radius_profile, density_profile, flux_distributin)
+        mass_weights_active[:, i, :] = uldm_term * mass_weights_naked
+        mass_weights_sterile[:, i, :] = (1 - uldm_term) * mass_weights_naked
+    
+    d = 3.4034
+    pmns = PMNS(th12, th13, th23, d)
+    
+    #pmns_raw = pmns.pmns
+    #pmns_square = np.square(np.abs(pmns.pmns))
+
+    
+    # Earth density
+    density_file = path+'/Data/Earth_Density.csv' 
+    earth_density = EarthDensity(density_file=density_file)
+
+    pee = np.zeros((distance.shape[0], eta.shape[0],  enu.shape[0]))
+    pes = np.zeros((distance.shape[0], eta.shape[0],  enu.shape[0]))
+    for j in range(len(eta)):
+        evol = EarthEvolution(enu, eta[j], earth_density, DeltamSq21, DeltamSq3l, pmns)
+        evolved = np.square(np.abs((evol @ pmns.pmns[np.newaxis])))
+        evolved = evolved[np.newaxis, :, :] * np.ones((distance.shape[0],1,1,1))
+        pee[:, j, :] = (evolved @ mass_weights_active[:, :, :, np.newaxis])[:, :, 0, 0]
         
-    ls, year, angle = SunEarthDistance(ParseDate('2020,1,1'), 365.25, 0.5)
-    year_list = year * 3.6525 * 2.4 * 6. * 6. / 6.6 # in 1e21 eV^-1
-    ls_meters = 1.496 * ls  # 1e11 Convert AU to meters
-    th_radians = np.radians(angle) 
+    return pee, pes 
 
-    pel = np.zeros((len(ls), len(enu)))
-    psl = np.zeros((len(ls), len(enu)))
 
-    util = np.ones((len(n_e), len(enu)))
-    ne = n_e[:, np.newaxis] * util
-    e = enu[np.newaxis, :] * util
-
-    ve = 2 * np.sqrt(2) * FERMI_CONSTANT * ne * HBAR_C**3 * 1e-9 * e
-        
-    sin_theta12_2 = param['SinT12']
-    cos_theta12_2 = 1 - sin_theta12_2
-    
-    cos_2theta12 = 1 - 2 * sin_theta12_2
-    sin_2theta12 = 2 * np.sqrt(param['SinT12'] -  param['SinT12']**2)
-    
-    sin_theta13 = np.sin(np.radians(param['T13']))
-    cos_theta13 = np.cos(np.radians(param['T13']))
-    
-    den = np.sqrt((param['M12'] * cos_2theta12 - ve)**2 + (param['M12'] * sin_2theta12)**2)
-    nom = param['M12'] * cos_2theta12 - ve
-    
-    tm = 0.5 * np.arccos(nom / den)
-  
-    cos_tm_distributed = np.sum(phi[:, np.newaxis] * np.cos(tm)**2, axis=0)[np.newaxis,:]
-    sin_tm_distributed = np.sum(phi[:, np.newaxis] * np.sin(tm)**2, axis=0)[np.newaxis,:]
-    
-    cos_tm_distributed = np.repeat(cos_tm_distributed, len(ls), axis=0)
-    sin_tm_distributed = np.repeat(sin_tm_distributed, len(ls), axis=0)
-    
-    ls_meters = ls_meters[:,np.newaxis]
-    ls_meters = np.repeat(ls_meters, len(enu), axis=1)
-
-    th_radians = th_radians[:,np.newaxis]
-    th_radians = np.repeat(th_radians, len(enu), axis=1)
-
-    year_list = year_list[:,np.newaxis]
-    year_list = np.repeat(year_list, len(enu), axis=1)
-
-    e_extend = enu[np.newaxis,:]
-    e_extend = np.repeat(e_extend, len(ls), axis=0)
-    
-    polar_vec = np.sqrt((1 + ( param['epsx'] * np.cos(th_radians) - param['epsy'] * np.sin(th_radians))**2))
-    
-    
-    mass_var = 1e9 * (RHO_DM2/param['mdm']) * (np.cos(param['mdm'] * year_list + np.radians(param['alpha'])) 
-                                  - np.cos(param['mdm'] * (year_list + (1e-2/6.6) * ls_meters/LIGHT_SPEED) + np.radians(param['alpha'])))
-
-    
-    ae1 = cos_theta13**4 * cos_theta12_2 * cos_tm_distributed * np.cos(param['mu1'] * polar_vec * mass_var)**2
-    ae2 = cos_theta13**4 * sin_theta12_2 * sin_tm_distributed * np.cos(param['mu2'] * polar_vec * mass_var)**2
-        
-    pel = ae1 + ae2 
-
-    as1 = cos_theta13**2 * cos_tm_distributed * np.sin(param['mu1'] * polar_vec * mass_var)**2
-    as2 = cos_theta13**2 * sin_tm_distributed * np.sin(param['mu2'] * polar_vec * mass_var)**2
-    as3 = sin_theta13**2 * np.sin(param['mu3'] * polar_vec * mass_var)**2
-
-    psl = as1 + as2 + as3
-
-    return pel, psl, ls_meters/1.496, angle
+def EarthEvolution(enu, eta_angle, earth_density, DeltamSq21, DeltamSq3l, pmns):
+    evol = np.zeros((enu.shape[0],3,3), dtype=np.complex128)
+    for i in prange(enu.shape[0]):
+        evol[i] = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta_angle, 1e3, False)
+    return evol
 
 def ParseDate(date_str):
     """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""
@@ -217,7 +254,6 @@ def ParseDate(date_str):
     date = datetime(year, month, day, 0, 0, 0, tzinfo=utc)
     return time_scale.utc(date)
     
-
 
 def SunEarthDistance(start_date, total_days, time_step):
     """Calculate Sun-Earth distance over a period."""

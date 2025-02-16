@@ -1,11 +1,12 @@
 import numpy as np
+from numba import njit, prange
 
 from datetime import datetime
 from skyfield.api import load, utc
 
 from framework_pkg.survival_probablity import SunEarthDistance, ParseDate
 
-from framework_pkg.survival_probablity import MSW, PseudoDirac
+from framework_pkg.survival_probablity import MSW, PseudoDirac, ULDM
 
 # Global Constants
 FERMI_CONSTANT = 1.166  # e-11 MeV^-2
@@ -15,6 +16,8 @@ ELECTRON_MASS = 0.511  # MeV
 WEAK_MIXING_ANGLE = 0.2315
 RHO = 1.0126
 ALPHA = 1 / (137 * np.pi)  # Fine-structure constant (radiative correction term)
+ECCENTRICITY = 0.016698
+
 
 time_scale = load.timescale()  # Create a timescale object
 
@@ -57,19 +60,23 @@ class FrameWork:
         self.zeroday = self.firstday.tt - t0.tt
 
         # Geometric characteristic: Sun-Earth distance time step (in day, 1 is a fair choice)
-        self.time_step = 1
-        self.distance_list, self.day_list, self.angle_list = SunEarthDistance(self.firstday, self.total_days, self.time_step)
+        #self.time_step = 0.1
+        #self.distance_list, self.day_list, self.angle_list = SunEarthDistance(self.firstday, self.total_days, self.time_step)
+        #self.eta_list = self._eta_list_maker(self.day_list)
+
+        self.eta, self.theta, self.distance, self.day = self._variable_maker()        
+        self.extended_distance = self.distance[:, np.newaxis, np.newaxis] * np.ones((1,self.eta.shape[0], self.energy_nu.shape[0]))
         
         # neutrino electron/moun elastic scattering cross section
         self.cs_electron = self._compute_cross_section(self.energy_nu, self.energy_recoil, 1)
         self.cs_muon = self._compute_cross_section(self.energy_nu, self.energy_recoil, -1)
 
 
-        # Load modulation data from file
-        self.modulation_data = np.loadtxt('./Data/sksolartimevariation5804d.txt')
-        self.modulation_data[:, :3] /= (60. * 60. * 24.)  # Convert time columns to days
-        self.modulation_data = self.modulation_data[self.modulation_data[:, 0] - self.modulation_data[:, 1] >= self.zeroday]
-        self.modulation_data[:, 0] -= self.zeroday
+        # # Load modulation data from file
+        # self.modulation_data = np.loadtxt('./Data/sksolartimevariation5804d.txt')
+        # self.modulation_data[:, :3] /= (60. * 60. * 24.)  # Convert time columns to days
+        # self.modulation_data = self.modulation_data[self.modulation_data[:, 0] - self.modulation_data[:, 1] >= self.zeroday]
+        # self.modulation_data[:, 0] -= self.zeroday
 
         # Load spectrum data from file
         self.spectrum_data = np.loadtxt('./Data/B8_SuperK_Spectrum_2023.txt')
@@ -136,9 +143,11 @@ class FrameWork:
         # Compute survival probability using the specified method
         if name == "MSW":
             self.param.update(param_update)
-            survival_probability = MSW(self.param, self.energy_nu)
-            appearance = survival_probability * np.mean(1 / self.distance_list**2)
-            disappearance = (1 - survival_probability) * np.mean(1 / self.distance_list**2)
+            survival_probability = MSW(self.param, self.energy_nu, self.eta)
+            survival_probability = survival_probability[np.newaxis, :, :] * np.ones((self.distance.shape[0],1,1))
+            appearance = survival_probability / self.extended_distance**2
+            disappearance = (1 - survival_probability) / self.extended_distance**2
+
         elif name == "PseudoDirac":
             if "mum1" not in param_update:
                 param_update["mum1"] = 0  # Set a default value for param3
@@ -151,34 +160,56 @@ class FrameWork:
             survival_probability, sterile_probability = PseudoDirac(self.param, self.distance_list, self.energy_nu)
             appearance = np.mean(survival_probability / self.distance_list[:,np.newaxis]**2, axis=0)
             disappearance = np.mean((1 - survival_probability - sterile_probability) / self.distance_list[:,np.newaxis]**2, axis= 0 )
+        elif name == "ULDM":
+            if "mu1" not in param_update:
+                param_update["mu1"] = 0  
+            if "mu2" not in param_update:
+                param_update["mu2"] = 1.5
+            if "mu3" not in param_update:
+                param_update["mu3"] = 0  
+            if "mdm" not in param_update:
+                param_update["mdm"] = 1e3
+            if "alpha" not in param_update:
+                param_update["alpha"] = 0
+            if "epsx" not in param_update:
+                param_update["epsx"] = 0 
+            if "epsy" not in param_update:
+                param_update["epsy"] = 0 
+
+            self.param.update(param_update)
+            survival_probability, sterile_probability = ULDM(self.param, self.energy_nu, self.eta, self.theta, self.distance, self.day)
+            appearance = survival_probability
+            disappearance = 1 - survival_probability - sterile_probability
+        
         else:
             raise ValueError(f"Unsupported survival probability method: {name}")
 
         # Initialize integral arrays
         num_recoil_bins = len(self.energy_recoil)
-        integral_electron = np.zeros((num_recoil_bins))
-        integral_muon = np.zeros((num_recoil_bins))
+        integral_electron = np.zeros((appearance.shape[0], appearance.shape[1], num_recoil_bins))
+        integral_muon = np.zeros((appearance.shape[0], appearance.shape[1], num_recoil_bins))
+
 
         # Compute the electron and muon integrals
         z = 0
         for k in range(num_recoil_bins):
             if k < num_recoil_bins - len(self.energy_nu) :
-                integral_electron[k] = np.trapz(
-                self.spectrum_nu * self.cs_electron[k, :] * appearance, self.energy_nu)
-                integral_muon[k] = np.trapz(
-                    self.spectrum_nu * self.cs_muon[k, :] * disappearance, self.energy_nu)
+                integral_electron[:,:,k] = np.trapz(
+                self.spectrum_nu * self.cs_electron[k, :] * appearance, self.energy_nu, axis=2)
+                integral_muon[:,:,k] = np.trapz(
+                    self.spectrum_nu * self.cs_muon[k, :] * disappearance, self.energy_nu, axis=2)
             else:
-                integral_electron[k] = np.trapz(
-                    self.spectrum_nu[z:] * self.cs_electron[k, z:] * appearance[z:], self.energy_nu[z:])
-                integral_muon[k] = np.trapz(
-                    self.spectrum_nu[z:] * self.cs_muon[k, z:] * disappearance[z:], self.energy_nu[z:])
+                integral_electron[:,:,k] = np.trapz(
+                    self.spectrum_nu[z:] * self.cs_electron[k, z:] * appearance[:,:,z:], self.energy_nu[z:], axis=2)
+                integral_muon[:,:,k] = np.trapz(
+                    self.spectrum_nu[z:] * self.cs_muon[k, z:] * disappearance[:,:,z:], self.energy_nu[z:], axis=2)
                 z = z + 1
 
-        integral_electron_recoil = np.zeros((len(self.weight)))
-        integral_muon_recoil = np.zeros((len(self.weight)))
+        integral_electron_recoil = np.zeros((integral_electron.shape[0], integral_electron.shape[1], len(self.weight)))
+        integral_muon_recoil = np.zeros((integral_electron.shape[0], integral_electron.shape[1], len(self.weight)))
         for i in range(len(self.weight)):
-            integral_electron_recoil[i] = np.trapz( self.weight[i] * integral_electron, self.energy_recoil)
-            integral_muon_recoil[i] = np.trapz( self.weight[i] * integral_muon, self.energy_recoil)
+            integral_electron_recoil[:,:,i] = np.trapz( self.weight[i] * integral_electron, self.energy_recoil, axis=2)
+            integral_muon_recoil[:,:,i] = np.trapz( self.weight[i] * integral_muon, self.energy_recoil, axis=2)
 
         self.pridection = integral_electron_recoil + integral_muon_recoil
         return (integral_electron_recoil + integral_muon_recoil) / self.unoscillated_term 
@@ -299,3 +330,39 @@ class FrameWork:
                 * self.pridection
                 )
         
+    def _variable_maker(self):
+        eta = np.arange(0, np.pi, 0.01)
+        theta = np.arange(0, 2 * np.pi, 0.03)
+        distance =  (1 - ECCENTRICITY**2) / (1 + ECCENTRICITY * np.cos(theta)) 
+        norm_time = np.trapz(distance**2, theta)
+        days = []
+        cond = np.full(distance.shape, False)
+        for i in range (len(distance)):
+            delta_t = np.trapz(distance[:i]**2, theta[:i]) 
+            if delta_t != 0:
+                days.append(delta_t / norm_time)
+                cond[i] = True
+
+        days = np.array(days)
+        distance  = distance[cond]
+        theta = theta[cond]
+        return eta, theta, distance, days
+        
+        
+
+    # def _eta_list_maker(self, delta_time):
+    #     '''
+    #     Earth regeneration effect in solar neutrino oscillations: An Analytic approach
+    #     Phys.Rev.D 56 (1997) 1792-1803, arXiv : 9702343v2
+    #     '''
+    #     day_time = np.int16(delta_time * 365.25)
+    #     hour_time = np.mod(delta_time * 365.25, day_time) * 24.
+    #     hour_time[day_time<1] = delta_time[day_time<1] * 365.25 * 24.
+
+    #     sin_deltas = -np.sin(0.491) * np.cos(day_time * 2 * np.pi / 365)
+    #     detector_latitude = 36
+    #     cos_eta  = np.cos(np.radians(detector_latitude)) * np.cos(hour_time * 2 * np.pi / 24) * np.sqrt(1-sin_deltas**2) - np.sin(np.radians(detector_latitude)) * sin_deltas
+    #     return np.arccos(cos_eta)
+    
+
+                

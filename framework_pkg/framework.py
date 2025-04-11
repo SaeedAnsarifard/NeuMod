@@ -23,13 +23,13 @@ time_scale = load.timescale()  # Create a timescale object
 
 class FrameWork:
     """
-    Computes B8 prediction in unit of [10^6 cm^-2 s^-1] at each day from initial to final date,
+    Computes B8 prediction in unit of [10^6 cm^-2 s^-1] at each time bin from initial to final date,
     according to the Super-Kamiokande experiment response function.
     
     Parameters:
+    - threshold: Mask neutrino energy less than threshold (default is 3.5 Mev).
+    - efficiency_correction: considering the Super-Kamiokande efficiency function. It should be True in case of total event rate (default is True).
     - resolution_correction: considering the Super-Kamiokande response function. It should be True in case of spectrum analsys (default is False).
-    - do_binning: Whether to bin the data (default is True).
-    - masked_val: Mask neutrino energy less than masked_val (default is 2 Mev).
     - first_day: Start date in the format 'year,month,day' (default is '2008,9,15').
     - last_day: End date in the format 'year,month,day' (default is '2018,5,30').
     """
@@ -330,9 +330,9 @@ class FrameWork:
                 * self.pridection
                 )
         
-    def _variable_maker(self):
+    def _variable_maker(self, dtheta=0.03):
         eta = np.arange(0, np.pi, 0.01)
-        theta = np.arange(0, 2 * np.pi, 0.03)
+        theta = np.arange(0, 2 * np.pi, dtheta)
         distance =  (1 - ECCENTRICITY**2) / (1 + ECCENTRICITY * np.cos(theta)) 
         norm_time = np.trapz(distance**2, theta)
         days = []

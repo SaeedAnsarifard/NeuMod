@@ -36,14 +36,15 @@ time_scale = load.timescale()  # Create a timescale object
 #n_e = 6 * 10**np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[2, :]   # 1e23 cm^-3
 
 
-def MSW(param, enu, eta):
+def MSW(param, enu, eta, depth=1e3):
     """
     Calculate the survival probabilities for MSW neutrinos.
     
     Parameters:
     - param: Dictionary containing the physical parameters ('M12', 'SinT12', 'T13').
     - enu: Array of neutrino energies in MeV.
-    - eta: None for the case dont considering earth matter effect, otherwise a list of angle in radian
+    - eta: eta: Array of diurnal angles in radian. pi/2 <= eta <= pi for day
+    - depth: is the underground detector depth, in units of meters. The default value is matched with Super Kamiokande.
     
     Returns:
     - pee: Electron neutrino survival probabilities.
@@ -82,7 +83,7 @@ def MSW(param, enu, eta):
     earth_density = EarthDensity(density_file=density_file)
     pee = np.zeros((eta.shape[0], enu.shape[0]))
     for j in range(len(eta)):
-        evol = EarthEvolution(enu, eta[j], earth_density, DeltamSq21, DeltamSq3l, pmns)
+        evol = EarthEvolution(enu, eta[j], earth_density, depth, DeltamSq21, DeltamSq3l, pmns)
         evolved = np.square(np.abs((evol @ pmns.pmns[np.newaxis])))
         pee[j] = (evolved @ mass_weights[:, :, np.newaxis])[:, 0, 0]
         
@@ -157,7 +158,7 @@ def PseudoDirac(param, ls, enu):
 
 
 
-def ULDM(param, enu, eta, theta, distance, day):
+def ULDM(param, enu, eta, theta, distance, day, depth=1e3):
     """
     Calculate the survival probabilities for solar neutrinos in presence of ultra light dark matter field.
     
@@ -170,16 +171,19 @@ def ULDM(param, enu, eta, theta, distance, day):
     epsx^2 + epsy^2 <= 1
 
     - enu: Array of neutrino energies in MeV.
-    - eta: Array of diurnal angles in radian.
+    - eta: Array of diurnal angles in radian. pi/2 <= eta <= pi for day 
     - theta: Array of annual angles in radian.
-    - distance: Array of distance between earth and sun corresponding to theta.
-    - day: Array of earth day corresponding to theta.
+    - distance: Array of distance between earth and sun corresponding to theta. it is in unit of 1 AU
+    - day: Array of earth day corresponding to theta. Normalize to 365.25
+    - depth: is the underground detector depth, in units of meters. The default value is matched with Super Kamiokande.
     
     Returns:
     - pee: Electron neutrino survival probabilities.
     - pes: Sterile neutrino probabilities.
     """
 
+
+    # 1 year = \approx 4.8 10^{22} ev^{-1}
     day_list  = day * 3.6525 * 2.4 * 6. * 6. / 6.6 # in 1e21 eV^-1
     polar_vec = np.sqrt((1 - ( param['epsx'] * np.cos(theta) + param['epsy'] * np.sin(theta))**2))
     
@@ -234,7 +238,7 @@ def ULDM(param, enu, eta, theta, distance, day):
     pee = np.zeros((distance.shape[0], eta.shape[0],  enu.shape[0]))
     pes = np.zeros((distance.shape[0], eta.shape[0],  enu.shape[0]))
     for j in range(len(eta)):
-        evol = EarthEvolution(enu, eta[j], earth_density, DeltamSq21, DeltamSq3l, pmns)
+        evol = EarthEvolution(enu, eta[j], earth_density, depth, DeltamSq21, DeltamSq3l, pmns)
         evolved = np.square(np.abs((evol @ pmns.pmns[np.newaxis])))
         evolved = evolved[np.newaxis, :, :] * np.ones((distance.shape[0],1,1,1))
         pee[:, j, :] = (evolved @ mass_weights_active[:, :, :, np.newaxis])[:, :, 0, 0]
@@ -242,10 +246,10 @@ def ULDM(param, enu, eta, theta, distance, day):
     return pee, pes 
 
 
-def EarthEvolution(enu, eta_angle, earth_density, DeltamSq21, DeltamSq3l, pmns):
+def EarthEvolution(enu, eta_angle, earth_density, depth, DeltamSq21, DeltamSq3l, pmns):
     evol = np.zeros((enu.shape[0],3,3), dtype=np.complex128)
     for i in prange(enu.shape[0]):
-        evol[i] = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta_angle, 1e3, False)
+        evol[i] = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta_angle, depth, False)
     return evol
 
 def ParseDate(date_str):

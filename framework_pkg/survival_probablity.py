@@ -1,8 +1,8 @@
 import os
 import sys
 import numpy as np
-import numba as nb
-from numba import njit, prange
+
+from numba import prange
 
 from datetime import datetime
 from skyfield.api import load, utc
@@ -28,6 +28,8 @@ HBAR_C = 1.97  # e-11 MeV cm
 LIGHT_SPEED = 2.998 # 1e8 m/s
 RHO_DM2  = np.sqrt(2 * 0.4 * 7.65) #e-21 GeV^2
 ASTRO_UNIT    =  1.496 #1e11 m
+ASTRO_UNIT_EV =  0.758 #1e18 eV^-1
+ASTRO_UNIT_S  = 499 # s
 
 time_scale = load.timescale()  # Create a timescale object
 
@@ -36,7 +38,7 @@ time_scale = load.timescale()  # Create a timescale object
 #n_e = 6 * 10**np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[2, :]   # 1e23 cm^-3
 
 
-def MSW(param, enu, eta, depth=1e3):
+def MSW(param, enu, depth=1e3):
     """
     Calculate the survival probabilities for MSW neutrinos.
     
@@ -74,20 +76,33 @@ def MSW(param, enu, eta, depth=1e3):
     radius_profile = solar_model.radius()
     density_profile = solar_model.density()
     flux_distributin = solar_model.fraction(fraction)
-    mass_weights = np.zeros((enu.shape[0],3))
-    for i in prange(enu.shape[0]):
-        mass_weights[i] = solar_flux_mass(th12, th13, DeltamSq21, DeltamSq3l, enu[i], radius_profile, density_profile, flux_distributin)
     
     # Earth density
     density_file = path+'/Data/Earth_Density.csv' 
     earth_density = EarthDensity(density_file=density_file)
-    pee = np.zeros((eta.shape[0], enu.shape[0]))
-    for j in range(len(eta)):
-        evol = EarthEvolution(enu, eta[j], earth_density, depth, DeltamSq21, DeltamSq3l, pmns)
-        evolved = np.square(np.abs((evol @ pmns.pmns[np.newaxis])))
-        pee[j] = (evolved @ mass_weights[:, :, np.newaxis])[:, 0, 0]
+    eta_day = np.arange(np.pi/2 , np.pi, 0.1)
+    eta_night = np.arange(0 , np.pi/2, 10)
+
+    mass_weights = np.zeros((enu.shape[0],3))
+    I_evolved = np.zeros((enu.shape[0],3,2))
+    
+    for i in prange(enu.shape[0]):
+        mass_weights[i] = solar_flux_mass(th12, th13, DeltamSq21, DeltamSq3l, enu[i], radius_profile, density_profile, flux_distributin)
+        evolved_day = []
+        evolved_night = []
+        for eta in (eta_day):
+            evol = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta, depth, False)
+            evolved_day.append((np.square(np.abs((evol @ pmns.pmns))))[0,:])
+            
+        for eta in (eta_night):
+            evol = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta, depth, False)
+            evolved_night.append(np.square(np.abs((evol @ pmns.pmns)))[0,:])
+
+        I_evolved[i,:,0] = np.mean(np.array(evolved_day),axis=0)
+        I_evolved[i,:,1] = np.mean(np.array(evolved_night),axis=0)
+
         
-    return pee    
+    return I_evolved, mass_weights  
 
 
 def PseudoDirac(param, ls, enu):
@@ -156,25 +171,24 @@ def PseudoDirac(param, ls, enu):
     
     return None
 
-
-
 def ULDM(param, enu, eta, theta, distance, day, depth=1e3):
     """
     Calculate the survival probabilities for solar neutrinos in presence of ultra light dark matter field.
     
     Parameters:
     - param: Dictionary containing the physical parameters 
-    ('M12', 'SinT12', 'T13', 'mu1', 'mu2', 'mdm', 'epsx', 'epsy', 'alpha').
-    mu1 and mu2 are in GeV^{-1}
+    ('M12', 'SinT12', 'T13', 'mu1', 'mu2', 'mu3', 'mdm', 'eps', 'alpha_eps', 'alpha').
+    mu1 and mu2, and mu3 are in 10^{-7} GeV^{-1}
     alpha is in degrees
-    mdm is in 1e-21 eV
-    epsx^2 + epsy^2 <= 1
+    mdm is in 1e-18 eV
+    0 <= eps <= 1
+    0 <= alpha_eps <= pi
 
     - enu: Array of neutrino energies in MeV.
     - eta: Array of diurnal angles in radian. pi/2 <= eta <= pi for day 
     - theta: Array of annual angles in radian.
     - distance: Array of distance between earth and sun corresponding to theta. it is in unit of 1 AU
-    - day: Array of earth day corresponding to theta. Normalize to 365.25
+    - day: Array of earth day corresponding to theta in unit of year.
     - depth: is the underground detector depth, in units of meters. The default value is matched with Super Kamiokande.
     
     Returns:
@@ -184,16 +198,19 @@ def ULDM(param, enu, eta, theta, distance, day, depth=1e3):
 
 
     # 1 year = \approx 4.8 10^{22} ev^{-1}
-    day_list  = day * 3.6525 * 2.4 * 6. * 6. / 6.6 # in 1e21 eV^-1
-    polar_vec = np.sqrt((1 - ( param['epsx'] * np.cos(theta) + param['epsy'] * np.sin(theta))**2))
+    day_list  = day * 365.25 * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
+
+    polar_vec = np.sqrt((1 -  param['eps']**2 * np.cos( np.radians(param['alpha_eps']) - theta )**2 )) 
+    dimensionless_dipole = RHO_DM2 * 0.1 * ASTRO_UNIT_EV * distance * polar_vec 
+    dimensionless_dm_mass= 0.5 * param['mdm'] * ASTRO_UNIT_EV * distance
+    sinc_dm_mass = np.sinc(dimensionless_dm_mass)
+    mass_var     = np.sin(param['mdm'] * day_list + param['alpha'] - dimensionless_dm_mass)
+
+
+    uldm_term1 = np.cos(param['mu1'] * dimensionless_dipole * sinc_dm_mass * mass_var)**2 / distance**2 
+    uldm_term2 = np.cos(param['mu2'] * dimensionless_dipole * sinc_dm_mass * mass_var)**2 / distance**2 
+    uldm_term3 = np.cos(param['mu3'] * dimensionless_dipole * sinc_dm_mass * mass_var)**2 / distance**2 
     
-    mass_var = 1e9 * (RHO_DM2/param['mdm']) * (np.cos(param['mdm'] * day_list + np.radians(param['alpha'])) 
-                                    - np.cos(param['mdm'] * (day_list + (1e-2/6.6) * distance * ASTRO_UNIT/LIGHT_SPEED) + np.radians(param['alpha'])))
-    
-    
-    uldm_term1 = np.cos(param['mu1'] * polar_vec * mass_var)**2 / distance**2 
-    uldm_term2 = np.cos(param['mu2'] * polar_vec * mass_var)**2 / distance**2 
-    uldm_term3 = np.cos(param['mu3'] * polar_vec * mass_var)**2 / distance**2 
     uldm_term  = np.array([uldm_term1,uldm_term2,uldm_term3]).T 
 
     th12 = arcsin(sqrt(param['SinT12']))
@@ -205,7 +222,6 @@ def ULDM(param, enu, eta, theta, distance, day, depth=1e3):
     
     # Get arguments
     fraction = "8B"
-
     
     # Get the current directory path
     path = os.path.dirname(os.path.realpath(__file__))
@@ -226,10 +242,6 @@ def ULDM(param, enu, eta, theta, distance, day, depth=1e3):
     
     d = 3.4034
     pmns = PMNS(th12, th13, th23, d)
-    
-    #pmns_raw = pmns.pmns
-    #pmns_square = np.square(np.abs(pmns.pmns))
-
     
     # Earth density
     density_file = path+'/Data/Earth_Density.csv' 

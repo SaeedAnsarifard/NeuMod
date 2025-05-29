@@ -40,8 +40,8 @@ class FrameWork:
         self.efficiency_correction = efficiency_correction
 
         self.time_weights = np.loadtxt('./Data/time_exposures.txt')
-        # 1 year = \approx 4.8 10^{22} ev^{-1}
-        self.time_ev = self.time_weights[:,1] * 365.25 * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
+        # 1 s \approx 1.519 10^{15} ev^{-1}
+        self.time_ev = self.time_weights[:,1] * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
     
         self.t_p = (pd.Timestamp('2009-01-03') - pd.Timestamp('2008-09-15')).days  # Days to perihelion
         self.theta_p = (2 * np.pi / 365.25) * (self.time_weights[:,1] - self.t_p)
@@ -173,12 +173,12 @@ class FrameWork:
         z = 0
         for k in range(num_recoil_bins):            
             if k < num_recoil_bins - len(self.energy_nu) :
-                integral_electron_uldm[:,k] = np.trapz(p_uldm_electron * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
+                integral_electron_uldm[:,k] = np.trapz(-p_uldm_electron * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
                 integral_muon_uldm[:,k] = np.trapz( p_uldm_muon * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
                 integral_electron[:,k] = np.trapz(p_msw * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
                 integral_muon[:,k] = np.trapz( (1 - p_msw) * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
             else:
-                integral_electron_uldm[:,k] = np.trapz(p_uldm_electron[:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
+                integral_electron_uldm[:,k] = np.trapz(-p_uldm_electron[:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
                 integral_muon_uldm[:,k] = np.trapz(p_uldm_electron[:, z:] * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
                 integral_electron[:,k] = np.trapz(p_msw[:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
                 integral_muon[:,k] = np.trapz((1 - p_msw[:, z:]) * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
@@ -200,11 +200,20 @@ class FrameWork:
             #ULDM in this sector is not implemented       
         
         elif self.efficiency_correction:
-            r_k = 5.25 * (integral_electron_recoil + integral_muon_recoil)[:,0] * (1 + 2 * ECCENTRICITY * np.cos(self.theta_p)) / self.unoscillated_term  
+            rbar_k = (integral_electron_recoil + integral_muon_recoil)[:,0]
+            rbar_k_uldm = (integral_electron_recoil_uldm + integral_muon_recoil_uldm)[:,0]
+
+            r_k = 5.25 * rbar_k * 2 * ECCENTRICITY * np.cos(self.theta_p) / self.unoscillated_term  
+            
             if 1e-2 <= param_update["mdm"] <= 1e-1:
-                r_k_uldm = 5.25 * (integral_electron_recoil_uldm + integral_muon_recoil_uldm)[:,0] * ( 1 - self.param["eps"] * ( 1 + np.cos(2 * self.theta_p - self.param["alpha_eps"] ) ) )
-            elif param_update["mdm"] <= 1e-4:
-                r_k_uldm = 5.25 * (integral_electron_recoil_uldm + integral_muon_recoil_uldm)[:,0] *  ( 1 - self.param["eps"] * ( 1 + np.cos(2 * self.theta_p - self.param["alpha_eps"] ) ) ) * ( 1 - np.cos(2 * self.param["mdm"] * self.time_ev + self.param["alpha"]) )
+                r_k_uldm = - 5.25 * rbar_k_uldm *  self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] )
+            
+            #10^21 ev^{-1} is in order of 10 days and more
+            elif param_update["mdm"] <= 1.089e-3: 
+                r_k_uldm = 5.25 * rbar_k_uldm *  ( - ( 1 - self.param["eps"] ) * np.cos(2 * self.param["mdm"] * self.time_ev + self.param["alpha"])
+                                                  - self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] )
+                                                  + self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] ) *  np.cos(2 * self.param["mdm"] * self.time_ev + self.param["alpha"])
+                ) 
             else:
                 return None
             return r_k + r_k_uldm

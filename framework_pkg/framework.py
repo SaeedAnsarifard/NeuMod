@@ -205,11 +205,11 @@ class FrameWork:
 
             r_k = 5.25 * rbar_k * 2 * ECCENTRICITY * np.cos(self.theta_p) / self.unoscillated_term  
             
-            if 1e-2 <= param_update["mdm"] <= 1e-1:
+            if 0.1 <= param_update["mdm"] <= 1:
                 r_k_uldm = - 5.25 * rbar_k_uldm *  self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] )
             
             #10^21 ev^{-1} is in order of 10 days and more
-            elif param_update["mdm"] <= 1.089e-3: 
+            elif param_update["mdm"] <= 2e-3: 
                 r_k_uldm = 5.25 * rbar_k_uldm *  ( - ( 1 - self.param["eps"] ) * np.cos(2 * self.param["mdm"] * self.time_ev + self.param["alpha"])
                                                   - self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] )
                                                   + self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] ) *  np.cos(2 * self.param["mdm"] * self.time_ev + self.param["alpha"])

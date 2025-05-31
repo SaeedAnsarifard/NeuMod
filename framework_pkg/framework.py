@@ -215,7 +215,8 @@ class FrameWork:
                                                   + self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] ) *  np.cos(2 * self.param["mdm"] * self.time_ev + self.param["alpha"])
                 ) 
             else:
-                return None
+                #MSW 
+                return r_k
             return r_k + r_k_uldm
 
     def _bin_data(self, data):

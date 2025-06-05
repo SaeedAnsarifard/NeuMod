@@ -143,7 +143,6 @@ class FrameWork:
 
         Parameters:
             param_update (dict): Dictionary containing updated parameter values.
-            name (string) : name of survival probablity function (MSW or ULDM)
 
         Returns:
             
@@ -155,7 +154,7 @@ class FrameWork:
         for i in range(3):
             mean_I_evolved[:,:,i] = (self.time_weights[:,np.newaxis,2] * I_evolved[np.newaxis,:,i,0] 
                                 + self.time_weights[:,np.newaxis,3] * I_evolved[np.newaxis,:,i,1]) / (self.time_weights[:,np.newaxis,2] + self.time_weights[:,np.newaxis,3] )
-        p_msw = np.sum(mean_I_evolved * mass_weights, axis=2)
+        self.p_msw = np.sum(mean_I_evolved * mass_weights, axis=2)
                  
 
         mu_couplings = np.array([self.param["mu1"],self.param["mu2"],self.param["mu3"]])
@@ -174,14 +173,14 @@ class FrameWork:
         for k in range(num_recoil_bins):            
             if k < num_recoil_bins - len(self.energy_nu) :
                 integral_electron_uldm[:,k] = np.trapz(-p_uldm_electron * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
-                integral_muon_uldm[:,k] = np.trapz( p_uldm_muon * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
-                integral_electron[:,k] = np.trapz(p_msw * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
-                integral_muon[:,k] = np.trapz( (1 - p_msw) * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
+                integral_muon_uldm[:,k] = np.trapz(p_uldm_muon * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
+                integral_electron[:,k] = np.trapz(self.p_msw * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
+                integral_muon[:,k] = np.trapz( (1 - self.p_msw) * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
             else:
                 integral_electron_uldm[:,k] = np.trapz(-p_uldm_electron[:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
-                integral_muon_uldm[:,k] = np.trapz(p_uldm_electron[:, z:] * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
-                integral_electron[:,k] = np.trapz(p_msw[:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
-                integral_muon[:,k] = np.trapz((1 - p_msw[:, z:]) * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
+                integral_muon_uldm[:,k] = np.trapz(p_uldm_muon[:, z:] * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
+                integral_electron[:,k] = np.trapz(self.p_msw[:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
+                integral_muon[:,k] = np.trapz((1 - self.p_msw[:, z:]) * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
                 z = z + 1
 
         integral_electron_recoil = np.zeros((integral_electron.shape[0], len(self.weight)))
@@ -200,24 +199,23 @@ class FrameWork:
             #ULDM in this sector is not implemented       
         
         elif self.efficiency_correction:
-            rbar_k = (integral_electron_recoil + integral_muon_recoil)[:,0]
-            rbar_k_uldm = (integral_electron_recoil_uldm + integral_muon_recoil_uldm)[:,0]
+            self.rbar_k = (integral_electron_recoil + integral_muon_recoil)
+            self.rbar_k_uldm = (integral_electron_recoil_uldm + integral_muon_recoil_uldm)
 
-            r_k = 5.25 * rbar_k * 2 * ECCENTRICITY * np.cos(self.theta_p) / self.unoscillated_term  
+            r_k = self.rbar_k[:,0] * ( 1 +  2 * ECCENTRICITY * np.cos(self.theta_p) ) 
             
             if 0.1 <= param_update["mdm"] <= 1:
-                r_k_uldm = - 5.25 * rbar_k_uldm *  self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] )
+                r_k_uldm = self.rbar_k_uldm[:,0] * ( 1 - self.param["eps"] - self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] ) )
             
             #10^21 ev^{-1} is in order of 10 days and more
             elif param_update["mdm"] <= 2e-3: 
-                r_k_uldm = 5.25 * rbar_k_uldm *  ( - ( 1 - self.param["eps"] ) * np.cos(2 * self.param["mdm"] * self.time_ev + self.param["alpha"])
-                                                  - self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] )
-                                                  + self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] ) *  np.cos(2 * self.param["mdm"] * self.time_ev + self.param["alpha"])
-                ) 
+                r_k_uldm = self.rbar_k_uldm[:,0] * ( 1 - self.param["eps"] 
+                                           - self.param["eps"] * np.cos(2 * self.theta_p - self.param["alpha_eps"] ) 
+                                          ) * ( 1 - np.cos(2 * self.param["mdm"] * self.time_ev + self.param["alpha"]) )
             else:
-                #MSW 
-                return r_k
-            return r_k + r_k_uldm
+                #MSW
+                r_k_uldm = 0 
+            return ( r_k + r_k_uldm ) * 5.25 / self.unoscillated_term
 
     def _bin_data(self, data):
         """Bins the data based on unique distance in the data."""

@@ -33,11 +33,6 @@ ASTRO_UNIT_S  = 499 # s
 
 time_scale = load.timescale()  # Create a timescale object
 
-# Load data
-#phi = np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[6, :]
-#n_e = 6 * 10**np.loadtxt('./Solar_Standard_Model/bs2005agsopflux1.txt', unpack=True)[2, :]   # 1e23 cm^-3
-
-
 def MSW(param, enu, depth=1e3):
     """
     Calculate the survival probabilities for MSW neutrinos.
@@ -45,8 +40,8 @@ def MSW(param, enu, depth=1e3):
     Parameters:
     - param: Dictionary containing the physical parameters ('M12', 'SinT12', 'T13').
     - enu: Array of neutrino energies in MeV.
-    - eta: eta: Array of diurnal angles in radian. pi/2 <= eta <= pi for day
-    - depth: is the underground detector depth, in units of meters. The default value is matched with Super Kamiokande.
+    - depth: is the underground detector depth, in units of meters.
+    The default value is matched with Super Kamiokande.
     
     Returns:
     - pee: Electron neutrino survival probabilities.
@@ -80,8 +75,8 @@ def MSW(param, enu, depth=1e3):
     # Earth density
     density_file = path+'/Data/Earth_Density.csv' 
     earth_density = EarthDensity(density_file=density_file)
-    eta_day = np.arange(np.pi/2 , np.pi, 0.1)
-    eta_night = np.arange(0 , np.pi/2, 10)
+    eta_day = np.linspace(np.pi/2 , np.pi, 5)
+    eta_night = np.linspace(0 , np.pi/2, 5)
 
     mass_weights = np.zeros((enu.shape[0],3))
     I_evolved = np.zeros((enu.shape[0],3,2))
@@ -104,7 +99,7 @@ def MSW(param, enu, depth=1e3):
         
     return I_evolved, mass_weights  
 
-
+'''
 def PseudoDirac(param, ls, enu):
     """
     Calculate the survival probabilities for pseudo-Dirac neutrinos.
@@ -263,6 +258,7 @@ def EarthEvolution(enu, eta_angle, earth_density, depth, DeltamSq21, DeltamSq3l,
     for i in prange(enu.shape[0]):
         evol[i] = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta_angle, depth, False)
     return evol
+'''
 
 def ParseDate(date_str):
     """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""

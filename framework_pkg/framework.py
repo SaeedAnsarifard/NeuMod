@@ -7,7 +7,7 @@ from skyfield.api import load, utc
 
 from framework_pkg.survival_probablity import SunEarthDistance, ParseDate
 
-from framework_pkg.survival_probablity import MSW, PseudoDirac, ULDM
+from framework_pkg.survival_probablity import MSW
 
 # Global Constants
 FERMI_CONSTANT = 1.166  # e-11 MeV^-2
@@ -29,27 +29,19 @@ class FrameWork:
     
     Parameters:
     - threshold: Mask neutrino energy less than threshold (default is 3.5 Mev).
-    - efficiency_correction: considering the Super-Kamiokande efficiency function. It should be True in case of total event rate (default is True).
-    - resolution_correction: considering the Super-Kamiokande response function. It should be True in case of spectrum analsys (default is False).
-    - first_day: Start date in the format 'year,month,day' (default is '2008,9,15').
-    - last_day: End date in the format 'year,month,day' (default is '2018,5,30').
+
+    - efficiency_correction: considering the Super-Kamiokande efficiency function.
+    It should be True in case of total event rate (default is True).
+
+    - resolution_correction: considering the Super-Kamiokande response function.
+    It should be True in case of spectrum analsys (default is False).
     """
 
     def __init__(self, threshold=3.5, efficiency_correction=True, resolution_correction=False):
         self.resolution_correction = resolution_correction
         self.efficiency_correction = efficiency_correction
 
-        self.time_weights = np.loadtxt('./Data/time_exposures.txt')
-        # 1 s \approx 1.519 10^{15} ev^{-1}
-        self.time_ev = self.time_weights[:,1] * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
-    
-        self.t_p = (pd.Timestamp('2009-01-03') - pd.Timestamp('2008-09-15')).days  # Days to perihelion
-        self.theta_p = (2 * np.pi / 365.25) * (self.time_weights[:,1] - self.t_p)
-
-
-        #self.firstday = ParseDate(first_day)
-        #self.lastday = ParseDate(last_day)
-        #self.total_days = int(self.lastday - self.firstday)
+        self.time_day, self.time_ev, self.theta_p = self._time_config('./Data/time_exposures.txt')
         
         # Neutrino flux normalization from SNO
         self.SNO_norm = 1e-4 * 5.25  # x 10^10 cm^-2 s^-1
@@ -64,28 +56,10 @@ class FrameWork:
         # Calculate recoil energy (in MeV)
         self.energy_recoil = spectrumB8[:, 0] / (1 + ELECTRON_MASS / (2 * spectrumB8[:, 0]))
         self.energy_recoil = np.concatenate((np.logspace(-5,-2,30), self.energy_recoil))
-
-        #t0 = time_scale.utc(datetime(1970, 1, 1, 0, 0, 0, tzinfo=utc))
-        #self.zeroday = self.firstday.tt - t0.tt
-
-        # Geometric characteristic: Sun-Earth distance time step (in day, 1 is a fair choice)
-        #self.time_step = 0.1
-        #self.distance_list, self.day_list, self.angle_list = SunEarthDistance(self.firstday, self.total_days, self.time_step)
-        #self.eta_list = self._eta_list_maker(self.day_list)
-
-        #self.eta, self.theta, self.distance, self.day = self._variable_maker()        
-        #self.extended_distance = self.distance[:, np.newaxis, np.newaxis] * np.ones((1,self.eta.shape[0], self.energy_nu.shape[0]))
-        
+ 
         # neutrino electron/moun elastic scattering cross section
         self.cs_electron = self._compute_cross_section(self.energy_nu, self.energy_recoil, 1)
         self.cs_muon = self._compute_cross_section(self.energy_nu, self.energy_recoil, -1)
-
-
-        # # Load modulation data from file
-        # self.modulation_data = np.loadtxt('./Data/sksolartimevariation5804d.txt')
-        # self.modulation_data[:, :3] /= (60. * 60. * 24.)  # Convert time columns to days
-        # self.modulation_data = self.modulation_data[self.modulation_data[:, 0] - self.modulation_data[:, 1] >= self.zeroday]
-        # self.modulation_data[:, 0] -= self.zeroday
 
         # Load spectrum data from file
         self.spectrum_data = np.loadtxt('./Data/B8_SuperK_Spectrum_2023.txt')
@@ -136,7 +110,6 @@ class FrameWork:
         # Default parameters
         self.param = {'SinT12': 0.319, 'T13': 8.57, 'M12': 7.54e-5}
 
-
     def __getitem__(self, param_update):
         """
         Compare the oscilated and unoscillated signal given updated parameters.
@@ -150,10 +123,10 @@ class FrameWork:
         self.param.update(param_update)
 
         I_evolved, mass_weights = MSW(self.param, self.energy_nu)
-        mean_I_evolved = np.zeros(((self.time_weights.shape[0], mass_weights.shape[0], 3)))
-        for i in range(3):
-            mean_I_evolved[:,:,i] = (self.time_weights[:,np.newaxis,2] * I_evolved[np.newaxis,:,i,0] 
-                                + self.time_weights[:,np.newaxis,3] * I_evolved[np.newaxis,:,i,1]) / (self.time_weights[:,np.newaxis,2] + self.time_weights[:,np.newaxis,3] )
+        mean_I_evolved = np.zeros(((self.time_day.shape[0], mass_weights.shape[0], mass_weights.shape[1])))
+        for i in range(mass_weights.shape[1]):
+            mean_I_evolved[:,:,i] = (self.time_day[:,np.newaxis,2] * I_evolved[np.newaxis,:,i,0] 
+                                + self.time_day[:,np.newaxis,3] * I_evolved[np.newaxis,:,i,1]) / (self.time_day[:,np.newaxis,2] + self.time_day[:,np.newaxis,3] )
         self.p_msw = np.sum(mean_I_evolved * mass_weights, axis=2)
                  
 
@@ -163,11 +136,11 @@ class FrameWork:
 
         # Initialize integral arrays
         num_recoil_bins = len(self.energy_recoil)
-        integral_electron = np.zeros((self.time_weights.shape[0], num_recoil_bins))
-        integral_muon = np.zeros((self.time_weights.shape[0], num_recoil_bins))
+        integral_electron = np.zeros((self.time_day.shape[0], num_recoil_bins))
+        integral_muon = np.zeros((self.time_day.shape[0], num_recoil_bins))
         
-        integral_electron_uldm = np.zeros((self.time_weights.shape[0], num_recoil_bins))
-        integral_muon_uldm = np.zeros((self.time_weights.shape[0], num_recoil_bins))
+        integral_electron_uldm = np.zeros((self.time_day.shape[0], num_recoil_bins))
+        integral_muon_uldm = np.zeros((self.time_day.shape[0], num_recoil_bins))
         # Compute the electron and muon integrals
         z = 0
         for k in range(num_recoil_bins):            
@@ -199,8 +172,8 @@ class FrameWork:
             #ULDM in this sector is not implemented       
         
         elif self.efficiency_correction:
-            self.rbar_k = (integral_electron_recoil + integral_muon_recoil)
-            self.rbar_k_uldm = (integral_electron_recoil_uldm + integral_muon_recoil_uldm)
+            self.rbar_k = (integral_electron_recoil + integral_muon_recoil) * 5.25 / self.unoscillated_term
+            self.rbar_k_uldm = (integral_electron_recoil_uldm + integral_muon_recoil_uldm) * 5.25 / self.unoscillated_term
 
             r_k = self.rbar_k[:,0] * ( 1 +  2 * ECCENTRICITY * np.cos(self.theta_p) ) 
             
@@ -215,7 +188,17 @@ class FrameWork:
             else:
                 #MSW
                 r_k_uldm = 0 
-            return ( r_k + r_k_uldm ) * 5.25 / self.unoscillated_term
+            return r_k + r_k_uldm 
+
+    def _time_config(self, add):
+        time_day = np.loadtxt(add)
+        # 1 s \approx 1.519 10^{15} ev^{-1}
+        time_ev = time_day[:,1] * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
+    
+        t_p = (pd.Timestamp('2009-01-03') - pd.Timestamp('2008-09-15')).days  # Days to perihelion
+        theta_p = (2 * np.pi / 365.25) * (time_day[:,1] - t_p)
+
+        return time_day, time_ev, theta_p
 
     def _bin_data(self, data):
         """Bins the data based on unique distance in the data."""

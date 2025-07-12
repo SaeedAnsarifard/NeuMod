@@ -75,28 +75,37 @@ def MSW(param, enu, depth=1e3):
     # Earth density
     density_file = path+'/Data/Earth_Density.csv' 
     earth_density = EarthDensity(density_file=density_file)
-    eta_day = np.linspace(np.pi/2 , np.pi, 5)
-    eta_night = np.linspace(0 , np.pi/2, 5)
+    
+    eta_day = pi 
+    eta_night = pi/2 * np.linspace(0,1.05,100) 
 
     mass_weights = np.zeros((enu.shape[0],3))
+    #U_evolved_day = np.zeros((enu.shape[0],len(eta_day),3))
+    #U_evolved_night = np.zeros((enu.shape[0],len(eta_night),3))
     I_evolved = np.zeros((enu.shape[0],3,2))
-    
-    for i in prange(enu.shape[0]):
+
+    matter_effect_index = len(enu[enu<5])
+    for i in prange(0, matter_effect_index):
         mass_weights[i] = solar_flux_mass(th12, th13, DeltamSq21, DeltamSq3l, enu[i], radius_profile, density_profile, flux_distributin)
-        evolved_day = []
-        evolved_night = []
-        for eta in (eta_day):
-            evol = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta, depth, False)
-            evolved_day.append((np.square(np.abs((evol @ pmns.pmns))))[0,:])
-            
+        I_evolved[i,:,0] = np.square(np.abs((pmns.pmns)))[0,:] 
+        I_evolved[i,:,1] = np.square(np.abs((pmns.pmns)))[0,:] 
+
+        #U_evolved_day[i,:,:] = np.square(np.abs((pmns.pmns)))[0,:] 
+        #U_evolved_night[i,:,:] = np.square(np.abs((pmns.pmns)))[0,:] 
+
+    for i in prange(matter_effect_index, enu.shape[0]):
+        mass_weights[i] = solar_flux_mass(th12, th13, DeltamSq21, DeltamSq3l, enu[i], radius_profile, density_profile, flux_distributin)
+        
+        evol = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta_day, depth, False)
+        I_evolved[i,:,0] = (np.square(np.abs((evol @ pmns.pmns))))[0,:]
+        
+        evolved_night = []        
         for eta in (eta_night):
             evol = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta, depth, False)
             evolved_night.append(np.square(np.abs((evol @ pmns.pmns)))[0,:])
+            #U_evolved_night[i,j,:] = np.square(np.abs((evol @ pmns.pmns)))[0,:]
 
-        I_evolved[i,:,0] = np.mean(np.array(evolved_day),axis=0)
-        I_evolved[i,:,1] = np.mean(np.array(evolved_night),axis=0)
-
-        
+        I_evolved[i,:,1] = np.mean(np.array(evolved_night),axis=0)        
     return I_evolved, mass_weights  
 
 '''

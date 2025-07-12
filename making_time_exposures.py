@@ -93,15 +93,15 @@ def calculate_day_length(days_since_start, lat=36):
     cos_lam = np.cos(np.radians(lat))
     sin_lam = np.sin(np.radians(lat))
 
-    t_day = np.arange(0,0.5,0.001)
+    t_day = np.linspace(0,0.5,2000)
     cos_eta = cos_lam * cos_delta * np.cos(2 * np.pi * t_day) - sin_lam * sin_delta
 
-    if len(t_day[cos_eta>=0]) == len(t_day):
-        return 0
-    elif  0 < len(t_day[cos_eta>=0]) < len(t_day)  : 
-        return 24 - t_day[cos_eta>=0][-1]*24*2
-    else:
+    if len(t_day[cos_eta >= 0]) == len(t_day):
         return 24
+    elif  0 < len(t_day[cos_eta>=0]) < len(t_day)  : 
+        return t_day[cos_eta>=0][-1] * 24
+    else:
+        return 0
 
 def main():
     time_scale = load.timescale()  # Create a timescale object
@@ -133,18 +133,22 @@ def main():
         T_day = 0
         T_night = 0
         t_k = 0
-
+        
         number_of_days = np.arange(int(organized_starting_bin[bins,0]), int(organized_ending_bin[bins,0]) + 1)
+    
         if organized_starting_bin[bins,1] > calculate_day_length(number_of_days[0]) :
-            if organized_starting_bin[bins,1] > 24 - calculate_day_length(number_of_days[0]):
-                T_day = 0
-                T_night = 24 - organized_starting_bin[bins,1]
-            else:
-                T_day = 24 - calculate_day_length(number_of_days[0]) - organized_starting_bin[bins,1]
-                T_night = calculate_day_length(number_of_days[0])   
+
+             if organized_starting_bin[bins,1] > 24 - calculate_day_length(number_of_days[0]):
+                 T_day = 0
+                 T_night = 24 - organized_starting_bin[bins,1]
+             else:
+                 T_day = 24 - calculate_day_length(number_of_days[0]) - organized_starting_bin[bins,1]
+                 T_night = calculate_day_length(number_of_days[0])   
         else:
-            T_day = 24 - 2 * calculate_day_length(number_of_days[0])
-            T_night = 2 * calculate_day_length(number_of_days[0]) - organized_starting_bin[bins,1]
+             T_day = 24 - 2 * calculate_day_length(number_of_days[0])
+             T_night = 2 * calculate_day_length(number_of_days[0]) - organized_starting_bin[bins,1]
+        
+
         
         if T_day >= 0.1  or T_night >= 0.1:    
             t_k = number_of_days[0] + (organized_starting_bin[bins,1] + (T_day + T_night) / 2) / 24.
@@ -163,7 +167,6 @@ def main():
             if organized_ending_bin[bins,1] > 24 - calculate_day_length(number_of_days[-1]):
                 T_day = 24 - 2 * calculate_day_length(number_of_days[-1])
                 T_night = 2 * calculate_day_length(number_of_days[-1]) + organized_ending_bin[bins,1] - 24 
-                t_k = number_of_days[-1] + (0.5 * organized_ending_bin[bins,1]) / 24.
             else:
                 T_day = organized_ending_bin[bins,1] - calculate_day_length(number_of_days[-1])
                 T_night = calculate_day_length(number_of_days[-1])    
@@ -181,7 +184,7 @@ def main():
     organized_data = np.array(organized_data).T
 
     # Save to a text file
-    np.savetxt('./Data/time_exposures_2.txt', organized_data, fmt='   '.join(['%i'] + ['%.1f']*3), header='num_bin  t_k  T_k^day  T_k^night')
+    np.savetxt('./Data/time_exposures.txt', organized_data, fmt='   '.join(['%i'] + ['%.1f']*3), header='num_bin  t_k  T_k^day  T_k^night')
     #np.savetxt('./Data/modulation_data.txt', modulation_data[:,[0,3,4,5]], fmt='   '.join(['%.2f']*4))
 
 

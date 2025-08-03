@@ -5,9 +5,7 @@ from numba import njit, prange
 from datetime import datetime
 from skyfield.api import load, utc
 
-from framework_pkg.survival_probablity import SunEarthDistance, ParseDate
-
-from framework_pkg.survival_probablity import MSW
+from framework_pkg.survival_probablity import SurvivalProbablity 
 
 # Global Constants
 FERMI_CONSTANT = 1.166  # e-11 MeV^-2
@@ -37,34 +35,23 @@ class FrameWork:
     It should be True in case of spectrum analsys (default is False).
     """
 
-    def __init__(self, threshold=3.5, efficiency_correction=True, resolution_correction=False):
+    def __init__(self, add=False, threshold=3.5, lat=36, efficiency_correction=True, resolution_correction=False):
         self.resolution_correction = resolution_correction
         self.efficiency_correction = efficiency_correction
+        self.lat = lat
 
-        self.time_day, self.time_ev, self.theta_p = self._time_config('./Data/time_exposures.txt')
-        #self.T_night, self.T_day, self.cos_eta, self.dt_dcos_eta, self.ind = self._compute_day_lenght(36)
-        
         # Neutrino flux normalization from SNO
         self.SNO_norm = 1e-4 * 5.25  # x 10^10 cm^-2 s^-1
         self.target_number = (10/18) * (1/1.67) * 6. * 6. * 24. #per day per kilo ton 10^35
         self.total_volume = 22.5  # Total detector volume in kilotons
 
-        # Load neutrino energy spectrum (B8 spectrum)
-        spectrumB8 = np.loadtxt('./Spectrum/B8_spectrum.txt')
-        
-        self.energy_nu = np.linspace(0.1,15.5,500)
-        self.spectrum_nu = np.interp(self.energy_nu, spectrumB8[:, 0], spectrumB8[:, 1])
+        #add = './Data/time_exposures.txt'
+        self._time_config(add)
+        self.survival_probability = SurvivalProbablity(self.lat)
+        self.year_closest_indices = np.argmin(np.abs(self.survival_probability.t_year[:, np.newaxis] - self.t_year), axis=0)
 
-        #self.spectrum_nu = spectrumB8[:, 1]
-        #self.energy_nu = spectrumB8[:, 0] 
 
-        # Calculate recoil energy (in MeV)
-        self.energy_recoil = self.energy_nu / (1 + ELECTRON_MASS / (2 * self.energy_nu))
-        self.energy_recoil = np.concatenate((np.logspace(-5,-2,30), self.energy_recoil))
- 
-        # neutrino electron/moun elastic scattering cross section
-        self.cs_electron = self._compute_cross_section(self.energy_nu, self.energy_recoil, 1)
-        self.cs_muon = self._compute_cross_section(self.energy_nu, self.energy_recoil, -1)
+        self._energy_config(np.linspace(0.1,15.5,500))
 
         # Load spectrum data from file
         self.spectrum_data = np.loadtxt('./Data/B8_SuperK_Spectrum_2023.txt')
@@ -72,16 +59,9 @@ class FrameWork:
 
         self.response_function = self._response_function(self.energy_obs, self.energy_recoil)
         self.efficiency = self._efficiency_function(self.energy_recoil, threshold)
+        self.weight = self._weight_config()
 
-        if self.resolution_correction:
-            # Map integrals to observed energy bins
-            self.weight = self.response_function
-        elif self.efficiency_correction:
-            # Map integrals to total signal with reduction efficiency 
-            self.weight = self.efficiency
-        else:
-            # Map integrals to total ideal signal without reduction efficiency 
-            self.weight = [1]
+        self.nonzero_indices = self._collect_nonzero_indices()
 
         # Compute response function and unoscillated integral
         self.unoscillated_term = self._compute_unoscilated_signal(
@@ -91,16 +71,25 @@ class FrameWork:
             self.cs_electron,
             self.weight
         )
-        self.pridection = 0 
-    
+
+        self.unoscillated_expected_spectrum = None
+        self.unoscillated_expected_event_rate = None
         if self.resolution_correction: 
             # Compute unoscillated expected spectrum per day per 22.5 kiloton
-            self.unoscillated_expected_spectrum = (
-                self.total_volume
-                * self.SNO_norm
-                * self.target_number
-                * self.unoscillated_term
-            )
+            if self.efficiency_correction:
+                self.unoscillated_expected_spectrum = (
+                    self.total_volume
+                    * self.SNO_norm
+                    * self.target_number
+                    * self.unoscillated_term[1:]
+                )
+            else:
+                self.unoscillated_expected_spectrum = (
+                    self.total_volume
+                    * self.SNO_norm
+                    * self.target_number
+                    * self.unoscillated_term
+                )
         elif self.efficiency_correction:
             pass
         else:
@@ -112,8 +101,18 @@ class FrameWork:
                 * self.unoscillated_term
             )
 
-        # Default parameters
-        self.param = {'SinT12': 0.319, 'T13': 8.57, 'M12': 7.54e-5}
+        # Default Values        
+        self.U_evolved = None
+        self.mass_weights = None
+        
+        self.time_periods = None
+        
+        self.p_uldm = None
+        self.pee = None
+        self.pes = None
+
+        #Default Parameters
+        self.param = {'SinT12': 0.319, 'M12': 7.54e-5}
 
     def __getitem__(self, param_update):
         """
@@ -127,76 +126,48 @@ class FrameWork:
         """
         self.param.update(param_update)
 
-        I_evolved, mass_weights = MSW(self.param, self.energy_nu)
-        
-        mean_I_evolved = np.zeros(((self.time_day.shape[0], mass_weights.shape[0], mass_weights.shape[1])))
+        th12 =  np.arcsin(np.sqrt(self.param['SinT12']))
+        DeltamSq21 = self.param['M12']
 
-        for i in range(mass_weights.shape[1]):
-            mean_I_evolved[:,:,i] = (self.time_day[:,np.newaxis,2] * I_evolved[np.newaxis,:,i,0] 
-                                + self.time_day[:,np.newaxis,3] * I_evolved[np.newaxis,:,i,1]) / (self.time_day[:,np.newaxis,2] + self.time_day[:,np.newaxis,3] )
-        
-        self.p_msw = np.sum(mean_I_evolved * mass_weights, axis=2)
+        self.U_evolved, self.mass_weights = self.survival_probability._MSW(th12, DeltamSq21, self.energy_nu)
+        integral_recoil = self._recoil_integral()
 
-        puldm = (1 - self.param["eps"] * np.cos(self.theta_p - self.param["alpha_eps"])**2) * np.sin(self.param["mdm"] * self.time_ev + self.param["alpha"])**2
-        mu_couplings = np.array([self.param["mu1"], self.param["mu2"], self.param["mu3"]])
-        self.p_uldm = puldm[:,np.newaxis] * mu_couplings
-        
-        self.pee = np.sum((1 - self.p_uldm)[:, np.newaxis, :] * mean_I_evolved * mass_weights, axis=2)
-        self.pes = np.sum(self.p_uldm[:,np.newaxis,:] * mass_weights, axis=2)
-        
-        #p_uldm_electron = np.sum(mean_I_evolved * mass_weights * mu_couplings, axis=2)
-        #p_uldm_muon = np.sum( (mean_I_evolved - 1) * mass_weights * mu_couplings, axis=2)
+        final_result = {}
+        for period in self.time_periods:
+            final_result[period] = integral_recoil[period] / ((( 1 -  ECCENTRICITY * np.cos(self.theta_p) )**2)[:, np.newaxis] * self.unoscillated_term[np.newaxis, :]) 
+            
+        return final_result
 
-        # Initialize integral arrays
-        num_recoil_bins = len(self.energy_recoil)
-        integral_electron = np.zeros((self.time_day.shape[0], num_recoil_bins))
-        integral_muon = np.zeros((self.time_day.shape[0], num_recoil_bins))
+    def _energy_config(self, energy_nu, res=30):
         
-        #integral_electron_uldm = np.zeros((self.time_day.shape[0], num_recoil_bins))
-        #integral_muon_uldm = np.zeros((self.time_day.shape[0], num_recoil_bins))
-        # Compute the electron and muon integrals
-        for i in range(len(self.weight)):
-            indices = np.nonzero(self.weight[i])
-            z = 0
-            for k in indices[0]:      
-                if k < num_recoil_bins - len(self.energy_nu) :
-                    #integral_electron_uldm[:,k] = np.trapz(p_uldm_electron * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
-                    #integral_muon_uldm[:,k] = np.trapz(-p_uldm_muon * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
-                    integral_electron[:,k] = np.trapz(self.pee * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
-                    integral_muon[:,k] = np.trapz( (1 - self.pee - self.pes) * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
-                else:
-                    z = k + len(self.energy_nu) - num_recoil_bins 
-                    #integral_electron_uldm[:,k] = np.trapz(p_uldm_electron[:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
-                    #integral_muon_uldm[:,k] = np.trapz(-p_uldm_muon[:, z:] * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
-                    integral_electron[:,k] = np.trapz(self.pee[:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
-                    integral_muon[:,k] = np.trapz((1 - self.pee[:, z:] - self.pes[:, z:]) * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
-                    
-        integral_electron_recoil = np.zeros((integral_electron.shape[0], len(self.weight)))
-        integral_muon_recoil = np.zeros((integral_electron.shape[0], len(self.weight)))
-        #integral_electron_recoil_uldm = np.zeros((integral_electron.shape[0], len(self.weight)))
-        #integral_muon_recoil_uldm = np.zeros((integral_electron.shape[0], len(self.weight)))
-        for i in range(len(self.weight)):
-            #integral_electron_recoil_uldm[:,i] = np.trapz( self.weight[i] * integral_electron_uldm, self.energy_recoil, axis=1)
-            #integral_muon_recoil_uldm[:,i] = np.trapz( self.weight[i] * integral_muon_uldm, self.energy_recoil, axis=1)
-            integral_electron_recoil[:,i] = np.trapz( self.weight[i] * integral_electron, self.energy_recoil, axis=1)
-            integral_muon_recoil[:,i] = np.trapz( self.weight[i] * integral_muon, self.energy_recoil, axis=1)
+        self.energy_nu = energy_nu
+        
+        # Load neutrino energy spectrum (B8 spectrum)
+        spectrumB8 = np.loadtxt('./Spectrum/B8_spectrum.txt')
+        
+        self.spectrum_nu = np.interp(energy_nu, spectrumB8[:, 0], spectrumB8[:, 1])
 
-        if self.resolution_correction:
-            self.pridection = np.mean((integral_electron_recoil + integral_muon_recoil) * (1 + 2 * ECCENTRICITY * np.cos(self.theta_p))[:,np.newaxis], axis=0)
-            return np.mean((integral_electron_recoil + integral_muon_recoil) * (1 + 2 * ECCENTRICITY * np.cos(self.theta_p))[:,np.newaxis] / self.unoscillated_term , axis=0)
-              
-        elif self.efficiency_correction:
-            return (integral_electron_recoil + integral_muon_recoil)[:,0] * 5.25 / (( 1 -  ECCENTRICITY * np.cos(self.theta_p) )**2 * self.unoscillated_term) 
+        # Calculate recoil energy (in MeV)
+        self.energy_recoil = energy_nu / (1 + ELECTRON_MASS / (2 * energy_nu))
+        self.energy_recoil = np.concatenate((np.logspace(-5,np.log10(self.energy_recoil[0]),res)[:-1], self.energy_recoil))
 
+        # neutrino electron/moun elastic scattering cross section
+        self.cs_electron = self._compute_cross_section(energy_nu, self.energy_recoil, 1)
+        self.cs_muon = self._compute_cross_section(energy_nu, self.energy_recoil, -1)
+    
     def _time_config(self, add):
-        time_day = np.loadtxt(add)
+        if add:
+            self.time_day = np.loadtxt(add)
+        else:
+            self.time_day = self._test_exposure()
+        
         # 1 s \approx 1.519 10^{15} ev^{-1}
-        time_ev = time_day[:,1] * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
+        self.time_ev = self.time_day[:,1] * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
     
         t_p = (pd.Timestamp('2009-01-03') - pd.Timestamp('2008-09-15')).days  # Days to perihelion
-        theta_p = (2 * np.pi / 365.25) * (time_day[:,1] - t_p)
-
-        return time_day, time_ev, theta_p
+        self.theta_p = (2 * np.pi / 365.25) * (self.time_day[:,1] - t_p)
+        self.t_year = np.mod(self.time_day[:,1] - t_p , 365.25) / 365.25
+        
 
     def _bin_data(self, data):
         """Bins the data based on unique distance in the data."""
@@ -234,10 +205,37 @@ class FrameWork:
         x = superk_efficiency[superk_efficiency[:,0]>= threshold,0]
         xp = superk_efficiency[superk_efficiency[:,0]>= threshold,1]
         right = superk_efficiency[-1,1]
-        return np.interp(energy_recoil, x, xp, left=0, right=right)[np.newaxis,:]
+        return np.interp(energy_recoil, x, xp, left=0, right=right)
+    
+    def _weight_config(self):
+        self.weight = []
+        if self.efficiency_correction:
+            # Map integrals to total signal with reduction efficiency 
+            self.weight.append(self.efficiency)
+        if self.resolution_correction:
+            # Map integrals to observed energy bins
+            for i in range (self.response_function.shape[0]):
+                self.weight.append(self.response_function[i])
+
+        if len(self.weight)==0:
+            # Map integrals to total ideal signal without reduction efficiency 
+            return np.ones((1,len(self.energy_recoil)))
+        else:
+            return np.array(self.weight)
+        
+    def _collect_nonzero_indices(self):
+        # Stack all arrays into a 2D array of shape (n, m)
+        stacked_arrays = np.stack(self.weight)
+        # Check for each index m if any of the n arrays has value > 1e-6
+        condition = np.any(stacked_arrays > 1e-6, axis=0)
+        # Get the indices where condition is True
+        indices = np.where(condition)[0]
+        # Convert to a set if needed
+        return set(indices)
     
     def _compute_unoscilated_signal(self, energy_recoil, energy_nu, spectrum_nu, cs_electron, weight):
         """Compute the unoscillated signal. The cross section is in unit of 10^{-45} cm^2"""
+        
         r  = np.zeros(energy_recoil.shape)
         k = 0 
         for z in range (len(energy_recoil)):
@@ -251,7 +249,7 @@ class FrameWork:
         for i in range(len(weight)):
             num_event[i] = np.trapz( r * weight[i] , energy_recoil)
         return num_event
-
+    
     def _compute_cross_section(self, e_nu, t_e, i=1):
         """
         Differential cross-section (dσ/dT_e) as a function of electron recoil (T_e) and neutrino energy (E_ν).
@@ -293,26 +291,178 @@ class FrameWork:
         # Differential cross-section in units of 10^-45 cm^2
         return 2 * HBARC_FERMI_CONSTANT**2 * (ELECTRON_MASS / np.pi) * (a1 + a2 - a3) * 10
     
-    def _pridection_function(self):
-        if self.resolution_correction: 
-            # spectrum events per day per 22.5 kiloton with oscillations
-            return ( 
-                self.total_volume
-                * self.SNO_norm
-                * self.target_number
-                * self.pridection
-                )
-        elif self.efficiency_correction:
-            return None
-        else:
-            return (
-                32.5
-                * self.SNO_norm
-                * self.target_number
-                * self.pridection
-                )
+    # def _pridection_function(self):
+    #     if self.resolution_correction: 
+    #         return None
+    #     elif self.efficiency_correction:
+    #         return None
+    #     else:
+    #         return (
+    #             32.5
+    #             * self.SNO_norm
+    #             * self.target_number
+    #             * self.pridection
+    #             )
+
+    def _day_night_probability(self):
+        """Calculate day and night survival probabilities considering ULDM modulation."""
         
-    def _compute_day_lenght(self, lat):
+        # Adjust based on first column is bin number and second number is day number
+        num_periods = self.time_day.shape[1] - 2  
+        self.time_periods = [f'period{i}' for i in range(num_periods)]
+
+        U_evolved_period = {}
+        
+        # Initialize output arrays
+        for period in self.time_periods:
+            U_evolved_period[period] = np.zeros((self.t_year.shape[0], self.U_evolved.shape[2], self.U_evolved.shape[3]))
+        
+        # Explicit day/night conditions             
+        day_condition = self.survival_probability.eta_info['eta'] <= 0
+        night_condition = ~day_condition
+        conditions = [day_condition, night_condition]  
+        
+        for period, cond in zip(self.time_periods, conditions):
+            for j in range(cond.shape[0]):
+                mask = (self.year_closest_indices == j)
+                U_evolved_period[period][mask] = np.mean(self.U_evolved[j, cond[j]], axis=0)
+        
+        # Calculate ULDM modulation
+        puldm = (1 - self.param["eps"] * np.cos(self.theta_p - self.param["alpha_eps"])**2) * \
+                np.sin(self.param["mdm"] * self.time_ev + self.param["alpha"])**2
+        mu_couplings = np.array([self.param["mu1"], self.param["mu2"], self.param["mu3"]])
+        self.p_uldm = puldm[:, np.newaxis] * mu_couplings
+        
+        # Calculate probabilities
+        self.pee = {}
+        for period in self.time_periods:
+            self.pee[period] = np.sum((1 - self.p_uldm)[:, np.newaxis, :] * U_evolved_period[period] * self.mass_weights, axis=2)
+        
+        self.pes = np.sum(self.p_uldm[:, np.newaxis, :] * self.mass_weights, axis=2) 
+
+    def _neutrino_integral(self):
+        """Calculate integrated electron and muon neutrino event rates for day/night periods.
+        
+        Returns:
+            tuple: (integral_electron, integral_muon) where each is a dict with 'day'/'night' keys
+                containing 2D arrays of shape (time_steps, recoil_bins)
+        """
+        self._day_night_probability()
+
+        num_recoil_bins = len(self.energy_recoil)
+        nu_bins = len(self.energy_nu)
+        
+        # Initialize output dictionaries
+        integral_electron = {part: np.zeros((self.time_day.shape[0], num_recoil_bins)) 
+                            for part in self.time_periods}
+        integral_muon = {part: np.zeros((self.time_day.shape[0], num_recoil_bins)) 
+                        for part in self.time_periods}
+
+        # Determine integration bounds for each recoil bin
+        for k in self.nonzero_indices:
+            # Handle edge case where we need to truncate the integration range
+            if k <= num_recoil_bins - nu_bins:
+                # Full integration range
+                start_idx = 0
+                energy_slice = slice(None)  # Equivalent to ':'
+            else:
+                # Truncated integration range
+                start_idx = k + nu_bins - num_recoil_bins
+                energy_slice = slice(start_idx, None)
+            
+            # Get slices for this bin
+            e_nu = self.energy_nu[energy_slice]
+            cs_e = self.cs_electron[k, energy_slice]
+            cs_m = self.cs_muon[k, energy_slice]
+            spectrum = self.spectrum_nu[energy_slice]
+            
+            for period in self.time_periods:
+                # Electron neutrino integral
+                integrand_e = self.pee[period][:, energy_slice] * spectrum * cs_e
+                integral_electron[period][:, k] = np.trapz(integrand_e, e_nu, axis=1)
+                
+                # Muon neutrino integral
+                integrand_m = (1 - self.pee[period][:, energy_slice] - self.pes[:, energy_slice]) * spectrum * cs_m
+                integral_muon[period][:, k] = np.trapz(integrand_m, e_nu, axis=1)
+        
+        return integral_electron, integral_muon
+    
+    def _recoil_integral(self):
+        """Compute the recoil energy integrals for electron and muon neutrinos (day/night).
+        
+        Returns:
+            tuple: Two dictionaries (`integral_electron_recoil`, `integral_muon_recoil`), 
+                each containing 'day' and 'night' keys with arrays of shape (time_steps, weights).
+        """
+        integral_electron, integral_muon = self._neutrino_integral()
+        num_time_steps = self.time_day.shape[0]
+        num_weights = len(self.weight)
+        
+        # Initialize output arrays
+        integral_electron_recoil = {
+            period: np.zeros((num_time_steps, num_weights)) 
+            for period in self.time_periods
+        }
+        integral_muon_recoil = {
+            period: np.zeros((num_time_steps, num_weights)) 
+            for period in self.time_periods
+        }
+
+        # Vectorized computation (avoid Python loops)
+        for period in self.time_periods:
+            # Shape: (num_time_steps, num_recoil_bins) * (num_weights, num_recoil_bins)
+            weighted_electron = self.weight[np.newaxis, :, :] * integral_electron[period][:, np.newaxis, :]
+            weighted_muon = self.weight[np.newaxis, :, :] * integral_muon[period][:, np.newaxis, :]
+            
+            # Integrate over recoil energy (axis=2)
+            integral_electron_recoil[period][:, :] = np.trapz(weighted_electron, self.energy_recoil, axis=2)
+            integral_muon_recoil[period][:, :] = np.trapz(weighted_muon, self.energy_recoil, axis=2)
+        
+        combined_integral = {period: integral_electron_recoil[period] + integral_muon_recoil[period]
+                             for period in self.time_periods
+                             }
+        return combined_integral
+    
+    # def _recoil_integral(self):
+    #     integral_electron, integral_muon = self._neutrino_integral()
+    #     # Initialize integral arrays        
+    #     integral_electron_recoil = {part : np.zeros((integral_electron.shape[0], len(self.weight)))
+    #                                 for part in self.time_periods}
+        
+    #     integral_muon_recoil = {part : np.zeros((integral_electron.shape[0], len(self.weight)))
+    #                             for part in self.time_periods}
+        
+    #     for i in range(len(self.weight)):
+    #         for part in self.time_periods:
+    #             integral_electron_recoil[part][:,i] = np.trapz( self.weight[i] * integral_electron[part], self.energy_recoil, axis=1)
+    #             integral_muon_recoil[part][:,i] = np.trapz( self.weight[i] * integral_muon[part], self.energy_recoil, axis=1)
+
+    #     return integral_electron_recoil, integral_muon_recoil
+
+    # def _neutrino_integral(self):
+    #     num_recoil_bins = len(self.energy_recoil)
+    #     integral_electron = {'day' : np.zeros((self.time_day.shape[0], num_recoil_bins)),
+    #                          'night' : np.zeros((self.time_day.shape[0], num_recoil_bins))
+    #     }
+
+    #     integral_muon = {'day' : np.zeros((self.time_day.shape[0], num_recoil_bins)),
+    #                          'night' : np.zeros((self.time_day.shape[0], num_recoil_bins))
+    #     }
+
+    #     # Compute the electron and muon integrals
+    #     for k in self.nonzero_indices:      
+    #         if k <= num_recoil_bins - len(self.energy_nu) :
+    #             for part in self.time_periods:
+    #                 integral_electron[part][:,k] = np.trapz(self.pee[part] * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
+    #                 integral_muon[part][:,k] = np.trapz( (1 - self.pee[part] - self.pes) * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
+    #         else:
+    #             z = k + len(self.energy_nu) - num_recoil_bins
+    #             for part in self.time_periods:
+    #                 integral_electron[part][:,k] = np.trapz(self.pee[part][:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
+    #                 integral_muon[part][:,k] = np.trapz((1 - self.pee[part][:, z:] - self.pes[:, z:]) * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
+    #     return integral_electron, integral_muon
+    
+    def _test_exposure(self):
         """
         Calculate daylight duration (hours) for a given day and latitude.
         
@@ -331,85 +481,50 @@ class FrameWork:
         """
         # Constants
         OBLIQUITY_RADIANS = np.radians(23.44)  # Earth's axial tilt (ε)
-        DAYS_PER_YEAR = 365.25
+        DAYS_PER_YEAR = 365
 
-        t_s = (pd.Timestamp('2008-12-21') - pd.Timestamp('2008-09-15')).days  # Days to solstice
-                
-        # Solar declination (δ)
-        sin_delta = -np.sin(OBLIQUITY_RADIANS) * np.cos(2 * np.pi * (self.time_day[:,1] - t_s) / DAYS_PER_YEAR)
-        cos_delta = np.sqrt(1 - sin_delta**2)
+        cos_lam = np.cos(np.radians(self.lat))
+        sin_lam = np.sin(np.radians(self.lat))
         
-        cos_lam = np.cos(np.radians(lat))
-        sin_lam = np.sin(np.radians(lat))
+        days_in_year = np.linspace(0, 1, DAYS_PER_YEAR)
+        t_s = (pd.Timestamp('2008-12-21') - pd.Timestamp('2008-09-15')).days / DAYS_PER_YEAR
+        
+        t_in_day = np.linspace(0,0.5,2000)
+        time_exposure = [[] for i in range(4)]
 
-        t = np.linspace(0+1e-6, 0.5-1e-6, int(1e5))
-        sin_t = np.sin(2 * np.pi * t)
-        cos_eta = np.zeros((len(sin_delta),len(sin_t)))
-        dt_dcos_eta = np.zeros((len(sin_delta),len(sin_t)))
-        T_day = np.zeros(len(sin_delta))
-        T_night = np.zeros(len(sin_delta))
-        ind = np.zeros(len(sin_delta), dtype=np.int32)
-        for i in range (len(sin_delta)):
-            cos_eta[i,:] = cos_lam * cos_delta[i] * np.cos(2 * np.pi * t) - sin_lam * sin_delta[i]
-            dt_dcos_eta[i,:] = 12 / ( np.pi * cos_lam * cos_delta[i] * sin_t )
-            
-            if len(t[cos_eta[i]>=0]) == len(t):
-                T_day[i] = 0.
-                T_night[i] = 24.
-                ind[i] = -1
-            
-            elif  0 < len(t[cos_eta[i]>=0]) < len(t)  : 
-                T_day[i] =  24 - 2*t[cos_eta[i]>=0][-1]*24
-                T_night[i] = 2*t[cos_eta[i]>=0][-1]*24
-                ind[i] = np.argwhere(cos_eta[i]>=0)[-1][0]
+        for day in days_in_year:
+            sin_delta = -np.sin(OBLIQUITY_RADIANS) * np.cos(2 * np.pi * (day - t_s))
+            cos_delta = np.sqrt(1 - sin_delta**2)
+
+            cos_eta = cos_lam * cos_delta * np.cos(2 * np.pi * t_in_day) - sin_lam * sin_delta
+
+            time_exposure[0].append(1)
+            time_exposure[1].append(day * DAYS_PER_YEAR)
+
+            if len(t_in_day[cos_eta >= 0]) == len(t_in_day):
+                time_exposure[2].append(0)
+                time_exposure[3].append(24)
+
+            elif  0 < len(t_in_day[cos_eta >=0]) < len(t_in_day): 
+                time_exposure[2].append(24 - t_in_day[cos_eta >=0][-1] * 24 * 2)
+                time_exposure[3].append(t_in_day[cos_eta >=0][-1] * 24 * 2)
             else:
-                T_day[i] = 24.
-                T_night[i] = 0.
-                ind[i] = 0
-        return T_night, T_day, cos_eta, dt_dcos_eta, ind
+                time_exposure[2].append(24)
+                time_exposure[3].append(0)
         
-    def _compute_I_mean(self, U_sq, W, T_night, cos_eta_grid, cos_eta_k0):
-        """
-        Compute I_i^night(k) for each k
-        
-        Parameters
-        ----------
-        U_sq : ndarray, shape (n,)
-            Array of |U_{eα} U_{αi}|^2 sampled at cos(η) grid
-        W : ndarray, shape (n, m)
-            Array of W(η, k) values over cos(η) and k
-        T_night : ndarray, shape (m,)
-            Array of T_k^{night} for each k
-        cos_eta_grid : ndarray, shape (n,)
-            The grid of cos(η) values, assumed sorted ascending
-        cos_eta_k0 : ndarray, shape (m,)
-            Upper integration limits for each k
-        
-        Returns
-        -------
-        I_night : ndarray, shape (m,)
-            Integral values I_i^{night}(k) for each k
-        """
-        n, m = W.shape
-        I_night = np.zeros(m)
-        
-        for k in range(m):
-            # mask cos(η) ∈ [0, cos_eta_k0[k]]
-            upper_limit = cos_eta_k0[k]
-            
-            mask = (cos_eta_grid >= 0) & (cos_eta_grid <= upper_limit)
-            
-            cos_eta_sub = cos_eta_grid[mask]
-            integrand_sub = W[mask, k] * U_sq[mask]
-            
-            if integrand_sub.size > 0:
-                integral = np.trapz(integrand_sub, cos_eta_sub)
-            else:
-                integral = 0.0
-            
-            I_night[k] = (2 / T_night[k]) * integral
-        
-        return I_night
+        return np.array(time_exposure).T
+
+    def _result_daily_basis(self, raw_result):
+        periods = self.time_periods
+
+        daily_exposure = np.sum(self.time_day[:,2:],axis=1)
+        R_daily = np.zeros((self.time_day.shape[0],self.weight.shape[0]))
+        for i in range(self.weight.shape[0]):
+            R_daily[:,i] = np.sum(np.array([raw_result[periods[j]][:,i] * self.time_day[:,2+j] for j in range(len(periods))]), axis=0) / daily_exposure
+                        
+        return daily_exposure, R_daily
+
+
         
     def _variable_maker(self, dtheta=0.01):
         eta = np.arange(0, np.pi, 0.01)

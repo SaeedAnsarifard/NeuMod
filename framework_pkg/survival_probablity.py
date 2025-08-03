@@ -7,8 +7,8 @@ from numba import prange
 from datetime import datetime
 from skyfield.api import load, utc
 
-from numpy import arcsin
-from math import sqrt, pi, radians
+#from numpy import arcsin
+from math import pi, radians
 
 # Get the current working directory
 peanuts_path = os.path.abspath(os.path.join(os.getcwd(), "external", "PEANUTS"))
@@ -33,242 +33,139 @@ ASTRO_UNIT_S  = 499 # s
 
 time_scale = load.timescale()  # Create a timescale object
 
-def MSW(param, enu, depth=1e3):
-    """
-    Calculate the survival probabilities for MSW neutrinos.
-    
-    Parameters:
-    - param: Dictionary containing the physical parameters ('M12', 'SinT12', 'T13').
-    - enu: Array of neutrino energies in MeV.
-    - depth: is the underground detector depth, in units of meters.
-    The default value is matched with Super Kamiokande.
-    
-    Returns:
-    - pee: Electron neutrino survival probabilities.
-    """
+
+class SurvivalProbablity:
+
+    def __init__(self, lam, fraction='8B', depth=1e3):
+        self.depth = depth
+
+        self.th13 = radians(8.52)
+        self.th23 = radians(48.5)
+        self.d = 3.4034
+        self.DeltamSq3l = 2.534e-3
+        self.fraction = fraction
         
-    th12 = arcsin(sqrt(param['SinT12']))
-    th13 = radians(param['T13'])
-    th23 = 0.85521
+        # Initialize th12 and DeltamSq21 without values
+        self.th12 = None
+        self.DeltamSq21 = None
 
-    d = 3.4034
-    pmns = PMNS(th12, th13, th23, d)
+        solar_model, self.earth_density = self._setup_solar_earth_model()
+        self.radius_profile = solar_model.radius()
+        self.density_profile = solar_model.density()
+        self.flux_distributin = solar_model.fraction(self.fraction)
 
-    DeltamSq21 = param['M12']
-    DeltamSq3l = 2.46e-3
-    
-    # Get arguments
-    fraction = "8B"
-    
-    
-    # Get the current directory path
-    path = os.path.dirname(os.path.realpath(__file__))
-    parent_dir = os.path.dirname(path)
-    path = os.path.join(parent_dir, 'external', 'PEANUTS')
-    solar_file  = path+'/Data/bs2005agsopflux.csv'
-    solar_model = SolarModel(solar_file)
 
-    radius_profile = solar_model.radius()
-    density_profile = solar_model.density()
-    flux_distributin = solar_model.fraction(fraction)
-    
-    # Earth density
-    density_file = path+'/Data/Earth_Density.csv' 
-    earth_density = EarthDensity(density_file=density_file)
-    
-    eta_day = pi 
-    eta_night = pi/2 * np.linspace(0,1.05,100) 
+        self.t_year = np.linspace(0, 1, 365) # 1 days resolution
+        self.t_day = np.linspace(0, 0.5, int(12 * 10))
 
-    mass_weights = np.zeros((enu.shape[0],3))
-    #U_evolved_day = np.zeros((enu.shape[0],len(eta_day),3))
-    #U_evolved_night = np.zeros((enu.shape[0],len(eta_night),3))
-    I_evolved = np.zeros((enu.shape[0],3,2))
+        self.eta_info, self.eta_list = self._EtaMaker(lam)
 
-    matter_effect_index = len(enu[enu<5])
-    for i in prange(0, matter_effect_index):
-        mass_weights[i] = solar_flux_mass(th12, th13, DeltamSq21, DeltamSq3l, enu[i], radius_profile, density_profile, flux_distributin)
-        I_evolved[i,:,0] = np.square(np.abs((pmns.pmns)))[0,:] 
-        I_evolved[i,:,1] = np.square(np.abs((pmns.pmns)))[0,:] 
-
-        #U_evolved_day[i,:,:] = np.square(np.abs((pmns.pmns)))[0,:] 
-        #U_evolved_night[i,:,:] = np.square(np.abs((pmns.pmns)))[0,:] 
-
-    for i in prange(matter_effect_index, enu.shape[0]):
-        mass_weights[i] = solar_flux_mass(th12, th13, DeltamSq21, DeltamSq3l, enu[i], radius_profile, density_profile, flux_distributin)
+    def _setup_solar_earth_model(self):
+        # Get the current directory path
+        path = os.path.dirname(os.path.realpath(__file__))
+        parent_dir = os.path.dirname(path)
+        path = os.path.join(parent_dir, 'external', 'PEANUTS')
         
-        evol = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta_day, depth, False)
-        I_evolved[i,:,0] = (np.square(np.abs((evol @ pmns.pmns))))[0,:]
+        solar_file  = path+'/Data/bs2005agsopflux.csv'
+        density_file = path+'/Data/Earth_Density.csv' 
+
+        earth_density = EarthDensity(density_file=density_file)
+        solar_model = SolarModel(solar_file)
+        return solar_model, earth_density
+
+    def _EtaMaker(self, lam):
+        from collections import defaultdict
+
+        t_year = self.t_year 
+        t_day = self.t_day 
+
+        # Constants
+        cos_lam = np.cos(np.radians(lam))
+        sin_lam = np.sin(np.radians(lam))
+
+        # Filtering parameters
+        epsilon = 2e-3  # Eta Resolution threshold
+
+        # Create structured array to store all η information
+        dtype = [('eta', float), ('i', int), ('j', int), ('is_unique', bool), 
+                ('i_original', int), ('j_original', int)]
+        eta_info = np.empty((len(t_year), len(t_day)), dtype=dtype)
+
+        # Dictionary to track unique η values and their first occurrence
+        eta_lookup = defaultdict(list)
+
+        for i, y in enumerate(t_year):
+            sin_delta = -np.sin(np.radians(23.4)) * np.cos(2 * np.pi * y)
+            cos_delta = np.sqrt(1 - sin_delta**2)
+            
+            for j, d in enumerate(t_day):
+                current_eta = cos_lam * cos_delta * np.cos(2 * np.pi * d) - sin_lam * sin_delta
+                if current_eta < np.cos(1.05 * pi / 2):
+                    #the evolutor is approximated at value of eta = pi for eta > 1.05 * pi / 2 
+                    current_eta = -1.
+
+                
+                # Check if this η is close to any previously stored η
+                is_unique = True
+                i_orig, j_orig = i, j
+                
+                # Find all buckets this η could belong to (for epsilon tolerance)
+                eta_key = round(current_eta / epsilon)
+                
+                if eta_key in eta_lookup:
+                    # Check all η values in this bucket
+                    for (stored_eta, stored_i, stored_j) in eta_lookup[eta_key]:
+                        if np.isclose(current_eta, stored_eta, atol=epsilon):
+                            is_unique = False
+                            i_orig, j_orig = stored_i, stored_j
+                            break
+                
+                # Store the information
+                eta_info[i,j] = (current_eta, i, j, is_unique, i_orig, j_orig)
+                
+                # If unique, add to our lookup dictionary
+                if is_unique:
+                    eta_lookup[eta_key].append((current_eta, i, j))
+
+
+        unique_mask = eta_info['is_unique']
+        eta_list = np.arccos(eta_info[unique_mask]['eta'])
+        return eta_info, eta_list
+    
+    def _MSW(self, th12, DeltamSq21, enu):
+
+        self.th12 = th12
+        self.DeltamSq21 = DeltamSq21
+
+        pmns = PMNS(self.th12, self.th13, self.th23, self.d)
         
-        evolved_night = []        
-        for eta in (eta_night):
-            evol = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta, depth, False)
-            evolved_night.append(np.square(np.abs((evol @ pmns.pmns)))[0,:])
-            #U_evolved_night[i,j,:] = np.square(np.abs((evol @ pmns.pmns)))[0,:]
+        mass_weights = np.zeros((enu.shape[0],3))
+        U_evolved = np.zeros((self.eta_info.shape[0], self.eta_info.shape[1], enu.shape[0], 3))
 
-        I_evolved[i,:,1] = np.mean(np.array(evolved_night),axis=0)        
-    return I_evolved, mass_weights  
+        matter_effect_index = len(enu[enu<3.5])
+        unique_mask = self.eta_info['is_unique']
+        for i in prange(0, matter_effect_index):
+            mass_weights[i] = solar_flux_mass(self.th12, self.th13, self.DeltamSq21, self.DeltamSq3l, enu[i],
+                                              self.radius_profile, self.density_profile, self.flux_distributin)
+            
+            U_evolved[:,:,i,:] = np.square(np.abs((pmns.pmns)))[0,:] 
 
-'''
-def PseudoDirac(param, ls, enu):
-    """
-    Calculate the survival probabilities for pseudo-Dirac neutrinos.
+        for i in prange(matter_effect_index, enu.shape[0]):
+            mass_weights[i] = solar_flux_mass(self.th12, self.th13, self.DeltamSq21, self.DeltamSq3l, enu[i],
+                                              self.radius_profile, self.density_profile, self.flux_distributin)
+            
+            evol_list = np.empty((len(self.eta_list), 3))
+            for j, eta in enumerate (self.eta_list):
+                evol = FullEvolutor(self.earth_density, self.DeltamSq21, self.DeltamSq3l, pmns, enu[i], eta, self.depth, False)
+                evol_list[j] = np.square(np.abs((evol @ pmns.pmns)))[0,:]
+                
+            U_evolved[unique_mask,i,:] = evol_list
+            U_evolved[~unique_mask,i,:] = U_evolved[self.eta_info['i_original'][~unique_mask],
+                                                    self.eta_info['j_original'][~unique_mask],i,:]
+
+        return U_evolved, mass_weights  
     
-    Parameters:
-    - param: Dictionary containing the physical parameters ('M12', 'SinT12', 'T13', 'mum1', 'mum2', 'mum3').
-    - ls: Array of solar distances in AU.
-    - enu: Array of neutrino energies in MeV.
-    
-    Returns:
-    - pel: Electron neutrino survival probabilities.
-    - psl: Sterile neutrino survival probabilities.
-    """
-    # ls_meters = 1.496 * ls  # 1e11 Convert AU to meters
-    # pel = np.zeros((len(ls), len(enu)))
-    # psl = np.zeros((len(ls), len(enu)))
-
-    # util = np.ones((len(n_e), len(enu)))
-    # ne = n_e[:, np.newaxis] * util
-    # e = enu[np.newaxis, :] * util
-
-    # ve = 2 * np.sqrt(2) * FERMI_CONSTANT * ne * HBAR_C**3 * 1e-9 * e
         
-    # sin_theta12_2 = param['SinT12']
-    # cos_theta12_2 = 1 - sin_theta12_2
-    
-    # cos_2theta12 = 1 - 2 * sin_theta12_2
-    # sin_2theta12 = 2 * np.sqrt(param['SinT12'] -  param['SinT12']**2)
-    
-    # sin_theta13 = np.sin(np.radians(param['T13']))
-    # cos_theta13 = np.cos(np.radians(param['T13']))
-    
-    
-    # den = np.sqrt((param['M12'] * cos_2theta12 - ve)**2 + (param['M12'] * sin_2theta12)**2)
-    # nom = param['M12'] * cos_2theta12 - ve
-    
-    # tm = 0.5 * np.arccos(nom / den)
-  
-    # cos_tm_distributed = np.sum(phi[:, np.newaxis] * np.cos(tm)**2, axis=0)[np.newaxis,:]
-    # sin_tm_distributed = np.sum(phi[:, np.newaxis] * np.sin(tm)**2, axis=0)[np.newaxis,:]
-    
-    # cos_tm_distributed = np.repeat(cos_tm_distributed,len(ls),axis=0)
-    # sin_tm_distributed = np.repeat(sin_tm_distributed,len(ls),axis=0)
-    
-    # ls_meters = ls_meters[:,np.newaxis]
-    # ls_meters = np.repeat(ls_meters,len(enu),axis=1)
-    
-    # e_extend = enu[np.newaxis,:]
-    # e_extend = np.repeat(e_extend,len(ls),axis=0)
-    
-    # ae1 = cos_theta13**4 * cos_theta12_2 * cos_tm_distributed * np.cos(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    # ae2 = cos_theta13**4 * sin_theta12_2 * sin_tm_distributed * np.cos(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    # ae3 = sin_theta13**4 * np.cos(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-
-    # pel = ae1 + ae2 + ae3
-
-    # as1 = cos_theta13**2 * cos_tm_distributed * np.sin(10 * param['mum1'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    # as2 = cos_theta13**2 * sin_tm_distributed * np.sin(10 * param['mum2'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-    # as3 = sin_theta13**2 * np.sin(10 * param['mum3'] * ls_meters / (HBAR_C * 2 * e_extend))**2
-
-    # psl = as1 + as2 + as3
-
-    # return pel, psl
-    
-    return None
-
-def ULDM(param, enu, eta, theta, distance, day, depth=1e3):
-    """
-    Calculate the survival probabilities for solar neutrinos in presence of ultra light dark matter field.
-    
-    Parameters:
-    - param: Dictionary containing the physical parameters 
-    ('M12', 'SinT12', 'T13', 'mu1', 'mu2', 'mu3', 'mdm', 'eps', 'alpha_eps', 'alpha').
-    mu1 and mu2, and mu3 are in 10^{-7} GeV^{-1}
-    alpha is in degrees
-    mdm is in 1e-18 eV
-    0 <= eps <= 1
-    0 <= alpha_eps <= pi
-
-    - enu: Array of neutrino energies in MeV.
-    - eta: Array of diurnal angles in radian. pi/2 <= eta <= pi for day 
-    - theta: Array of annual angles in radian.
-    - distance: Array of distance between earth and sun corresponding to theta. it is in unit of 1 AU
-    - day: Array of earth day corresponding to theta in unit of year.
-    - depth: is the underground detector depth, in units of meters. The default value is matched with Super Kamiokande.
-    
-    Returns:
-    - pee: Electron neutrino survival probabilities.
-    - pes: Sterile neutrino probabilities.
-    """
-
-
-    # 1 year = \approx 4.8 10^{22} ev^{-1}
-    day_list  = day * 365.25 * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
-
-    polar_vec = np.sqrt((1 -  param['eps']**2 * np.cos( np.radians(param['alpha_eps']) - theta )**2 )) 
-    dimensionless_dipole = RHO_DM2 * 0.1 * ASTRO_UNIT_EV * distance * polar_vec 
-    dimensionless_dm_mass= 0.5 * param['mdm'] * ASTRO_UNIT_EV * distance
-    sinc_dm_mass = np.sinc(dimensionless_dm_mass)
-    mass_var     = np.sin(param['mdm'] * day_list + param['alpha'] - dimensionless_dm_mass)
-
-
-    uldm_term1 = np.cos(param['mu1'] * dimensionless_dipole * sinc_dm_mass * mass_var)**2 / distance**2 
-    uldm_term2 = np.cos(param['mu2'] * dimensionless_dipole * sinc_dm_mass * mass_var)**2 / distance**2 
-    uldm_term3 = np.cos(param['mu3'] * dimensionless_dipole * sinc_dm_mass * mass_var)**2 / distance**2 
-    
-    uldm_term  = np.array([uldm_term1,uldm_term2,uldm_term3]).T 
-
-    th12 = arcsin(sqrt(param['SinT12']))
-    th13 = radians(param['T13'])
-    th23 = 0.85521
-
-    DeltamSq21 = param['M12']
-    DeltamSq3l = 2.46e-3
-    
-    # Get arguments
-    fraction = "8B"
-    
-    # Get the current directory path
-    path = os.path.dirname(os.path.realpath(__file__))
-    parent_dir = os.path.dirname(path)
-    path = os.path.join(parent_dir, 'external', 'PEANUTS')
-    solar_file  = path+'/Data/bs2005agsopflux.csv'
-    solar_model = SolarModel(solar_file)
-
-    radius_profile = solar_model.radius()
-    density_profile = solar_model.density()
-    flux_distributin = solar_model.fraction(fraction)
-    mass_weights_active = np.zeros((distance.shape[0], enu.shape[0], 3))
-    mass_weights_sterile = np.zeros((distance.shape[0], enu.shape[0], 3))
-    for i in prange(enu.shape[0]):
-        mass_weights_naked = solar_flux_mass(th12, th13, DeltamSq21, DeltamSq3l, enu[i], radius_profile, density_profile, flux_distributin)
-        mass_weights_active[:, i, :] = uldm_term * mass_weights_naked
-        mass_weights_sterile[:, i, :] = (1 - uldm_term) * mass_weights_naked
-    
-    d = 3.4034
-    pmns = PMNS(th12, th13, th23, d)
-    
-    # Earth density
-    density_file = path+'/Data/Earth_Density.csv' 
-    earth_density = EarthDensity(density_file=density_file)
-
-    pee = np.zeros((distance.shape[0], eta.shape[0],  enu.shape[0]))
-    pes = np.zeros((distance.shape[0], eta.shape[0],  enu.shape[0]))
-    for j in range(len(eta)):
-        evol = EarthEvolution(enu, eta[j], earth_density, depth, DeltamSq21, DeltamSq3l, pmns)
-        evolved = np.square(np.abs((evol @ pmns.pmns[np.newaxis])))
-        evolved = evolved[np.newaxis, :, :] * np.ones((distance.shape[0],1,1,1))
-        pee[:, j, :] = (evolved @ mass_weights_active[:, :, :, np.newaxis])[:, :, 0, 0]
-        
-    return pee, pes 
-
-
-def EarthEvolution(enu, eta_angle, earth_density, depth, DeltamSq21, DeltamSq3l, pmns):
-    evol = np.zeros((enu.shape[0],3,3), dtype=np.complex128)
-    for i in prange(enu.shape[0]):
-        evol[i] = FullEvolutor(earth_density, DeltamSq21, DeltamSq3l, pmns, enu[i], eta_angle, depth, False)
-    return evol
-'''
-
 def ParseDate(date_str):
     """Parse a date string in 'year,month,day' format and return the Skyfield utc date."""
     year, month, day = map(int, date_str.split(','))

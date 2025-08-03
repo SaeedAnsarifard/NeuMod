@@ -98,8 +98,8 @@ def calculate_day_length(days_since_start, lat=36):
 
     if len(t_day[cos_eta >= 0]) == len(t_day):
         return 24
-    elif  0 < len(t_day[cos_eta>=0]) < len(t_day)  : 
-        return t_day[cos_eta>=0][-1] * 24
+    elif  0 < len(t_day[cos_eta >= 0]) < len(t_day)  : 
+        return t_day[cos_eta >= 0][-1] * 24
     else:
         return 0
 

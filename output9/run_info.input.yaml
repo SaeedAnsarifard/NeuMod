@@ -1,0 +1,48 @@
+likelihood:
+  Chi2: true
+params:
+  sint12:
+    prior:
+      min: 0.275
+      max: 0.345
+    latex: \sin(\theta_{12})^2
+  m12:
+    prior:
+      min: 6.92
+      max: 8.05
+    latex: \Delta m^2_{21} \ \rm 10^{-5} \ eV^2
+  mu2:
+    prior:
+      min: 0
+      max: 0.15
+    latex: '\tilde{\mu}^2/2 '
+  alpha:
+    prior:
+      min: 0
+      max: 3.141592653589793
+    latex: '\alpha '
+  eps:
+    prior:
+      min: 0
+      max: 1.0
+    latex: '\epsilon '
+  alpha_eps:
+    prior:
+      min: 0
+      max: 3.141592653589793
+    latex: '\alpha_\epsilon '
+  delta_p:
+    prior:
+      min: -3
+      max: 3
+    latex: \delta_p
+  mdm:
+    prior:
+      min: 0.8
+      max: 0.89
+    latex: m_{\rm dm}
+sampler:
+  mcmc:
+    Rminus1_stop: 0.01
+    max_tries: 100000
+output: run_info

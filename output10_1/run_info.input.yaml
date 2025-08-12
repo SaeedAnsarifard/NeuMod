@@ -1,0 +1,35 @@
+likelihood:
+  Chi2: true
+params:
+  sint12:
+    prior:
+      dist: norm
+      loc: 0.31
+      scale: 0.012
+    latex: \sin(\theta_{12})^2
+  m12:
+    prior:
+      dist: norm
+      loc: 7.51
+      scale: 0.19
+    latex: \Delta m^2_{21} \ \rm 10^{-5} \ eV^2
+  mu2:
+    prior:
+      min: 0
+      max: 0.15
+    latex: '\tilde{\mu}^2/2 '
+  eps:
+    prior:
+      min: 0
+      max: 1.0
+    latex: '\epsilon '
+  delta_p:
+    prior:
+      min: -3
+      max: 3
+    latex: \delta_p
+sampler:
+  mcmc:
+    Rminus1_stop: 0.01
+    max_tries: 100000
+output: run_info

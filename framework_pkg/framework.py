@@ -46,22 +46,11 @@ class FrameWork:
         self.total_volume = 22.5  # Total detector volume in kilotons
 
         #add = './Data/time_exposures.txt'
+        self.year_closest_indices = None
         self._time_config(add)
-        self.survival_probability = SurvivalProbablity(self.lat)
-        self.year_closest_indices = np.argmin(np.abs(self.survival_probability.t_year[:, np.newaxis] - self.t_year), axis=0)
-
-
+        self._angle_config(no_earth_matter=False)
         self._energy_config(np.linspace(0.1,15.5,500))
-
-        # Load spectrum data from file
-        self.spectrum_data = np.loadtxt('./Data/B8_SuperK_Spectrum_2023.txt')
-        self.energy_obs = self.spectrum_data[:, :2]
-
-        self.response_function = self._response_function(self.energy_obs, self.energy_recoil)
-        self.efficiency = self._efficiency_function(self.energy_recoil, threshold)
-        self.weight = self._weight_config()
-
-        self.nonzero_indices = self._collect_nonzero_indices()
+        self._weight_config(threshold)
 
         # Compute response function and unoscillated integral
         self.unoscillated_term = self._compute_unoscilated_signal(
@@ -137,6 +126,25 @@ class FrameWork:
             final_result[period] = integral_recoil[period] / ((( 1 -  ECCENTRICITY * np.cos(self.theta_p) )**2)[:, np.newaxis] * self.unoscillated_term[np.newaxis, :]) 
             
         return final_result
+    
+    def _time_config(self, add):
+        if add:
+            self.time_day = np.loadtxt(add)
+        else:
+            self.time_day = self._test_exposure()
+        
+        # 1 s \approx 1.519 10^{15} ev^{-1}
+        self.time_ev = self.time_day[:,1] * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
+    
+        t_p = (pd.Timestamp('2009-01-03') - pd.Timestamp('2008-09-15')).days  # Days to perihelion
+        self.theta_p = (2 * np.pi / 365.25) * (self.time_day[:,1] - t_p)
+        self.t_year = np.mod(self.time_day[:,1] - t_p , 365.25) / 365.25
+        if self.year_closest_indices is not None:
+            self.year_closest_indices = np.argmin(np.abs(self.survival_probability.t_year[:, np.newaxis] - self.t_year), axis=0)
+            
+    def _angle_config(self, no_earth_matter):
+        self.survival_probability = SurvivalProbablity(self.lat, no_earth_matter)
+        self.year_closest_indices = np.argmin(np.abs(self.survival_probability.t_year[:, np.newaxis] - self.t_year), axis=0)
 
     def _energy_config(self, energy_nu, res=30):
         
@@ -154,34 +162,31 @@ class FrameWork:
         # neutrino electron/moun elastic scattering cross section
         self.cs_electron = self._compute_cross_section(energy_nu, self.energy_recoil, 1)
         self.cs_muon = self._compute_cross_section(energy_nu, self.energy_recoil, -1)
-    
-    def _time_config(self, add):
-        if add:
-            self.time_day = np.loadtxt(add)
-        else:
-            self.time_day = self._test_exposure()
-        
-        # 1 s \approx 1.519 10^{15} ev^{-1}
-        self.time_ev = self.time_day[:,1] * 2.4 * 6. * 6. * 1.519 # in 1e18 eV^-1
-    
-        t_p = (pd.Timestamp('2009-01-03') - pd.Timestamp('2008-09-15')).days  # Days to perihelion
-        self.theta_p = (2 * np.pi / 365.25) * (self.time_day[:,1] - t_p)
-        self.t_year = np.mod(self.time_day[:,1] - t_p , 365.25) / 365.25
-        
+                
+    def _weight_config(self, threshold):
+        # Load spectrum data from file
+        self.spectrum_data = np.loadtxt('./Data/B8_SuperK_Spectrum_2023.txt')
+        self.energy_obs = self.spectrum_data[:, :2]
 
-    def _bin_data(self, data):
-        """Bins the data based on unique distance in the data."""
-        error = np.mean(data[:,4:6],axis=1)
-        data_new = [[],[],[],[]]
-        d_unique = np.unique(data[:,6])
-        for i in range(0,len(d_unique)-1,2):
-            cond = (data[:,6] == d_unique[i])|(data[:,6] == d_unique[i+1])
-            data_new[0].append(0.5*(d_unique[i]+d_unique[i+1]))
-            data_new[1].append(np.mean(data[cond,3]))
-            data_new[2].append(np.sqrt(np.sum(error[cond]**2))/len(error[cond]))
-            data_new[3].append(0.5*(d_unique[i]-d_unique[i+1]))
-        return np.array(data_new).T
+        self.response_function = self._response_function(self.energy_obs, self.energy_recoil)
+        self.efficiency = self._efficiency_function(self.energy_recoil, threshold)
         
+        self.weight = []
+        if self.efficiency_correction:
+            # Map integrals to total signal with reduction efficiency 
+            self.weight.append(self.efficiency)
+        if self.resolution_correction:
+            # Map integrals to observed energy bins
+            for i in range (self.response_function.shape[0]):
+                self.weight.append(self.response_function[i])
+
+        if len(self.weight)==0:
+            # Map integrals to total ideal signal without reduction efficiency 
+            self.weight = np.ones((1,len(self.energy_recoil)))
+        else:
+            self.weight = np.array(self.weight)
+        self.nonzero_indices = self._collect_nonzero_indices()
+
     def _response_function(self, energy_obs, energy_recoil):
         """Compute the detector's response function. It is used to peredict the Super-Kamiokande spectrum data """
         r   = np.zeros((len(energy_obs),len(energy_recoil)))
@@ -206,22 +211,6 @@ class FrameWork:
         xp = superk_efficiency[superk_efficiency[:,0]>= threshold,1]
         right = superk_efficiency[-1,1]
         return np.interp(energy_recoil, x, xp, left=0, right=right)
-    
-    def _weight_config(self):
-        self.weight = []
-        if self.efficiency_correction:
-            # Map integrals to total signal with reduction efficiency 
-            self.weight.append(self.efficiency)
-        if self.resolution_correction:
-            # Map integrals to observed energy bins
-            for i in range (self.response_function.shape[0]):
-                self.weight.append(self.response_function[i])
-
-        if len(self.weight)==0:
-            # Map integrals to total ideal signal without reduction efficiency 
-            return np.ones((1,len(self.energy_recoil)))
-        else:
-            return np.array(self.weight)
         
     def _collect_nonzero_indices(self):
         # Stack all arrays into a 2D array of shape (n, m)
@@ -291,19 +280,6 @@ class FrameWork:
         # Differential cross-section in units of 10^-45 cm^2
         return 2 * HBARC_FERMI_CONSTANT**2 * (ELECTRON_MASS / np.pi) * (a1 + a2 - a3) * 10
     
-    # def _pridection_function(self):
-    #     if self.resolution_correction: 
-    #         return None
-    #     elif self.efficiency_correction:
-    #         return None
-    #     else:
-    #         return (
-    #             32.5
-    #             * self.SNO_norm
-    #             * self.target_number
-    #             * self.pridection
-    #             )
-
     def _day_night_probability(self):
         """Calculate day and night survival probabilities considering ULDM modulation."""
         
@@ -423,45 +399,6 @@ class FrameWork:
                              }
         return combined_integral
     
-    # def _recoil_integral(self):
-    #     integral_electron, integral_muon = self._neutrino_integral()
-    #     # Initialize integral arrays        
-    #     integral_electron_recoil = {part : np.zeros((integral_electron.shape[0], len(self.weight)))
-    #                                 for part in self.time_periods}
-        
-    #     integral_muon_recoil = {part : np.zeros((integral_electron.shape[0], len(self.weight)))
-    #                             for part in self.time_periods}
-        
-    #     for i in range(len(self.weight)):
-    #         for part in self.time_periods:
-    #             integral_electron_recoil[part][:,i] = np.trapz( self.weight[i] * integral_electron[part], self.energy_recoil, axis=1)
-    #             integral_muon_recoil[part][:,i] = np.trapz( self.weight[i] * integral_muon[part], self.energy_recoil, axis=1)
-
-    #     return integral_electron_recoil, integral_muon_recoil
-
-    # def _neutrino_integral(self):
-    #     num_recoil_bins = len(self.energy_recoil)
-    #     integral_electron = {'day' : np.zeros((self.time_day.shape[0], num_recoil_bins)),
-    #                          'night' : np.zeros((self.time_day.shape[0], num_recoil_bins))
-    #     }
-
-    #     integral_muon = {'day' : np.zeros((self.time_day.shape[0], num_recoil_bins)),
-    #                          'night' : np.zeros((self.time_day.shape[0], num_recoil_bins))
-    #     }
-
-    #     # Compute the electron and muon integrals
-    #     for k in self.nonzero_indices:      
-    #         if k <= num_recoil_bins - len(self.energy_nu) :
-    #             for part in self.time_periods:
-    #                 integral_electron[part][:,k] = np.trapz(self.pee[part] * self.spectrum_nu * self.cs_electron[k, :], self.energy_nu, axis=1)
-    #                 integral_muon[part][:,k] = np.trapz( (1 - self.pee[part] - self.pes) * self.spectrum_nu * self.cs_muon[k, :], self.energy_nu, axis=1)
-    #         else:
-    #             z = k + len(self.energy_nu) - num_recoil_bins
-    #             for part in self.time_periods:
-    #                 integral_electron[part][:,k] = np.trapz(self.pee[part][:,z:] * self.spectrum_nu[z:] * self.cs_electron[k, z:], self.energy_nu[z:], axis=1)
-    #                 integral_muon[part][:,k] = np.trapz((1 - self.pee[part][:, z:] - self.pes[:, z:]) * self.spectrum_nu[z:] * self.cs_muon[k, z:], self.energy_nu[z:], axis=1)
-    #     return integral_electron, integral_muon
-    
     def _test_exposure(self):
         """
         Calculate daylight duration (hours) for a given day and latitude.
@@ -481,25 +418,28 @@ class FrameWork:
         """
         # Constants
         OBLIQUITY_RADIANS = np.radians(23.44)  # Earth's axial tilt (ε)
-        DAYS_PER_YEAR = 365
+        DAYS_PER_YEAR = 365.25
 
+        NUM_DAY = (pd.Timestamp('2018-5-30') - pd.Timestamp('2008-09-15')).days # phase 4
+        days_in_year = np.linspace(1, NUM_DAY, NUM_DAY)
+        
         cos_lam = np.cos(np.radians(self.lat))
         sin_lam = np.sin(np.radians(self.lat))
         
-        days_in_year = np.linspace(0, 1, DAYS_PER_YEAR)
-        t_s = (pd.Timestamp('2008-12-21') - pd.Timestamp('2008-09-15')).days / DAYS_PER_YEAR
+        
+        t_s = (pd.Timestamp('2008-12-21') - pd.Timestamp('2008-09-15')).days
         
         t_in_day = np.linspace(0,0.5,2000)
         time_exposure = [[] for i in range(4)]
 
         for day in days_in_year:
-            sin_delta = -np.sin(OBLIQUITY_RADIANS) * np.cos(2 * np.pi * (day - t_s))
+            sin_delta = -np.sin(OBLIQUITY_RADIANS) * np.cos(2 * np.pi * (day - t_s) / DAYS_PER_YEAR)
             cos_delta = np.sqrt(1 - sin_delta**2)
 
             cos_eta = cos_lam * cos_delta * np.cos(2 * np.pi * t_in_day) - sin_lam * sin_delta
 
             time_exposure[0].append(1)
-            time_exposure[1].append(day * DAYS_PER_YEAR)
+            time_exposure[1].append(day)
 
             if len(t_in_day[cos_eta >= 0]) == len(t_in_day):
                 time_exposure[2].append(0)
@@ -511,8 +451,14 @@ class FrameWork:
             else:
                 time_exposure[2].append(24)
                 time_exposure[3].append(0)
-        
-        return np.array(time_exposure).T
+
+        time_exposure = np.array(time_exposure).T
+
+        # Randomly choose indices to keep (without replacement) for considering the 10% dead time
+        remove_indices = np.random.choice(NUM_DAY, size = int(NUM_DAY * 0.1), replace=False)
+        mask = np.ones(NUM_DAY, dtype=bool)
+        mask[remove_indices] = False
+        return time_exposure[mask]
 
     def _result_daily_basis(self, raw_result):
         periods = self.time_periods
@@ -524,7 +470,18 @@ class FrameWork:
                         
         return daily_exposure, R_daily
 
-
+    def _bin_data(self, data):
+        """Bins the data based on unique distance in the data."""
+        error = np.mean(data[:,4:6],axis=1)
+        data_new = [[],[],[],[]]
+        d_unique = np.unique(data[:,6])
+        for i in range(0,len(d_unique)-1,2):
+            cond = (data[:,6] == d_unique[i])|(data[:,6] == d_unique[i+1])
+            data_new[0].append(0.5*(d_unique[i]+d_unique[i+1]))
+            data_new[1].append(np.mean(data[cond,3]))
+            data_new[2].append(np.sqrt(np.sum(error[cond]**2))/len(error[cond]))
+            data_new[3].append(0.5*(d_unique[i]-d_unique[i+1]))
+        return np.array(data_new).T
         
     def _variable_maker(self, dtheta=0.01):
         eta = np.arange(0, np.pi, 0.01)

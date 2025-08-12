@@ -36,7 +36,7 @@ time_scale = load.timescale()  # Create a timescale object
 
 class SurvivalProbablity:
 
-    def __init__(self, lam, fraction='8B', depth=1e3):
+    def __init__(self, lam, no_earth_matter=False, fraction='8B', depth=1e3):
         self.depth = depth
 
         self.th13 = radians(8.52)
@@ -54,11 +54,10 @@ class SurvivalProbablity:
         self.density_profile = solar_model.density()
         self.flux_distributin = solar_model.fraction(self.fraction)
 
-
         self.t_year = np.linspace(0, 1, 365) # 1 days resolution
         self.t_day = np.linspace(0, 0.5, int(12 * 10))
 
-        self.eta_info, self.eta_list = self._EtaMaker(lam)
+        self.eta_info, self.eta_list = self._EtaMaker(lam, no_earth_matter)
 
     def _setup_solar_earth_model(self):
         # Get the current directory path
@@ -73,7 +72,7 @@ class SurvivalProbablity:
         solar_model = SolarModel(solar_file)
         return solar_model, earth_density
 
-    def _EtaMaker(self, lam):
+    def _EtaMaker(self, lam, no_earth_matter):
         from collections import defaultdict
 
         t_year = self.t_year 
@@ -100,6 +99,10 @@ class SurvivalProbablity:
             
             for j, d in enumerate(t_day):
                 current_eta = cos_lam * cos_delta * np.cos(2 * np.pi * d) - sin_lam * sin_delta
+                if no_earth_matter:
+                    if current_eta > np.cos(pi / 2):
+                        current_eta = 1.
+
                 if current_eta < np.cos(1.05 * pi / 2):
                     #the evolutor is approximated at value of eta = pi for eta > 1.05 * pi / 2 
                     current_eta = -1.
@@ -119,6 +122,8 @@ class SurvivalProbablity:
                             is_unique = False
                             i_orig, j_orig = stored_i, stored_j
                             break
+                
+
                 
                 # Store the information
                 eta_info[i,j] = (current_eta, i, j, is_unique, i_orig, j_orig)

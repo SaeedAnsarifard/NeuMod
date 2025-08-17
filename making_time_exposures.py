@@ -151,7 +151,7 @@ def main():
 
         
         if T_day >= 0.1  or T_night >= 0.1:    
-            t_k = number_of_days[0] + (organized_starting_bin[bins,1] + (T_day + T_night) / 2) / 24.
+            t_k = number_of_days[0] #+ (organized_starting_bin[bins,1] + (T_day + T_night) / 2) / 24.
             organized_data[0].append(bins)
             organized_data[1].append(t_k)
             organized_data[2].append(T_day)
@@ -159,7 +159,8 @@ def main():
         
         for j in (number_of_days[1:-1]):
             organized_data[0].append(bins)
-            organized_data[1].append(j + 0.5)
+            #organized_data[1].append(j + 0.5)
+            organized_data[1].append(j)
             organized_data[2].append(24 - 2 * calculate_day_length(j))
             organized_data[3].append(2 * calculate_day_length(j))
 
@@ -175,7 +176,7 @@ def main():
             T_night = organized_ending_bin[bins,1]
         
         if T_day >= 0.1  or T_night >= 0.1:     
-            t_k = number_of_days[-1] + (0.5 * organized_ending_bin[bins,1]) / 24.
+            t_k = number_of_days[-1] #+ (0.5 * organized_ending_bin[bins,1]) / 24.
             organized_data[0].append(bins)
             organized_data[1].append(t_k)
             organized_data[2].append(T_day)
@@ -184,7 +185,7 @@ def main():
     organized_data = np.array(organized_data).T
 
     # Save to a text file
-    np.savetxt('./Data/time_exposures.txt', organized_data, fmt='   '.join(['%i'] + ['%.1f']*3), header='num_bin  t_k  T_k^day  T_k^night')
+    np.savetxt('./Data/time_exposures_1.txt', organized_data, fmt='   '.join(['%i'] + ['%.1f']*3), header='num_bin  t_k  T_k^day  T_k^night')
     #np.savetxt('./Data/modulation_data.txt', modulation_data[:,[0,3,4,5]], fmt='   '.join(['%.2f']*4))
 
 

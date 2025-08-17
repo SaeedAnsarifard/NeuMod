@@ -10,8 +10,8 @@ params:
   m12:
     prior:
       dist: norm
-      loc: 5.5
-      scale: 2.5
+      loc: 7.51
+      scale: 0.19
     latex: \Delta m^2_{21} \ \rm 10^{-5} \ eV^2
   mu2:
     prior:
@@ -23,6 +23,11 @@ params:
       min: 0
       max: 1.0
     latex: '\epsilon '
+  delta_p:
+    prior:
+      min: -3
+      max: 3
+    latex: \delta_p
 sampler:
   mcmc:
     Rminus1_stop: 0.01
